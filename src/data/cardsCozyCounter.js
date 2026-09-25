@@ -1,4 +1,4 @@
-// Cards Specification: The Cozy Counter (15 Initial Cards)
+// Cards Specification: The Cozy Counter (15 Initial Cards + Economy & Sell Effects)
 export const COZY_COUNTER_CARDS = [
   {
     id: "cozy_armchair",
@@ -9,6 +9,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 3,
     attack: 1,
     health: 8,
+    saleValue: 4,
     rarity: "common",
     tags: ["furniture", "sturdy"],
     keywords: ["taunt"],
@@ -17,6 +18,9 @@ export const COZY_COUNTER_CARDS = [
     onHealed: (card, engine) => {
       card.attack += 1;
       engine.log(`${card.name} settles comfortably and gains +1 Attack!`);
+    },
+    onSold: (card, engine, isPlayer) => {
+      engine.healShopkeeper(isPlayer ? "player" : "enemy", 2, "Old Armchair sold to a loving home (+2 HP)!");
     }
   },
   {
@@ -28,6 +32,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 1,
     attack: 1,
     health: 3,
+    saleValue: 2,
     rarity: "common",
     tags: ["light", "fragile"],
     keywords: ["adjacent_buff"],
@@ -47,7 +52,8 @@ export const COZY_COUNTER_CARDS = [
     type: "item",
     cost: 2,
     attack: 2,
-    health: 4,
+    health: 5,
+    saleValue: 3,
     rarity: "common",
     tags: ["toy", "loyal"],
     keywords: [],
@@ -67,6 +73,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 2,
     attack: 3,
     health: 2,
+    saleValue: 3,
     rarity: "common",
     tags: ["appliance", "fiery"],
     keywords: [],
@@ -87,6 +94,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 3,
     attack: 0,
     health: 5,
+    saleValue: 4,
     rarity: "uncommon",
     tags: ["glass", "curious"],
     keywords: [],
@@ -110,6 +118,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 1,
     attack: 1,
     health: 2,
+    saleValue: 2,
     rarity: "common",
     tags: ["fabric", "oddity"],
     keywords: [],
@@ -133,6 +142,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 1,
     attack: 2,
     health: 1,
+    saleValue: 2,
     rarity: "common",
     tags: ["fabric", "oddity"],
     keywords: [],
@@ -155,6 +165,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 2,
     attack: 1,
     health: 4,
+    saleValue: 3,
     rarity: "uncommon",
     tags: ["kitchen", "melodic"],
     keywords: [],
@@ -183,10 +194,11 @@ export const COZY_COUNTER_CARDS = [
     faction: "cozy_counter",
     type: "trick",
     cost: 1,
+    saleValue: 1,
     rarity: "common",
     tags: ["food", "care"],
     keywords: ["heal"],
-    description: "Restore 4 Health to a target item or your Shopkeeper. Gain 1 Warmth.",
+    description: "Restore 4 Health to target item or Shopkeeper. Gain 1 Warmth.",
     flavor: "Not too hot, not too cold. Just right.",
     cast: (target, engine, isPlayer) => {
       if (target.isShopkeeper) {
@@ -206,6 +218,7 @@ export const COZY_COUNTER_CARDS = [
     faction: "cozy_counter",
     type: "upgrade",
     cost: 2,
+    saleValue: 2,
     rarity: "uncommon",
     tags: ["craft", "wood"],
     keywords: ["buff"],
@@ -228,6 +241,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 2,
     attack: 2,
     health: 2,
+    saleValue: 3,
     rarity: "common",
     tags: ["household", "agile"],
     keywords: ["swift"],
@@ -244,6 +258,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 2,
     attack: 0,
     health: 6,
+    saleValue: 3,
     rarity: "rare",
     tags: ["plant", "cozy"],
     keywords: ["ramp"],
@@ -261,10 +276,11 @@ export const COZY_COUNTER_CARDS = [
     faction: "cozy_counter",
     type: "trick",
     cost: 1,
+    saleValue: 1,
     rarity: "rare",
     tags: ["economy", "paper"],
     keywords: ["discount"],
-    description: "Reduce the Energy cost of cards in your hand by 1 this turn.",
+    description: "Reduce the Energy cost of cards in hand by 1 this turn.",
     flavor: "Marked down for immediate happiness.",
     cast: (target, engine, isPlayer) => {
       const hand = engine.getHand(isPlayer ? "player" : "enemy");
@@ -283,6 +299,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 4,
     attack: 2,
     health: 7,
+    saleValue: 6,
     rarity: "epic",
     tags: ["furniture", "ancient"],
     keywords: [],
@@ -311,6 +328,7 @@ export const COZY_COUNTER_CARDS = [
     cost: 5,
     attack: 3,
     health: 10,
+    saleValue: 8,
     rarity: "legendary",
     tags: ["relic", "cozy"],
     keywords: ["radiance"],

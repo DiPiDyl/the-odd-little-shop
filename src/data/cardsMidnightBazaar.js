@@ -1,4 +1,4 @@
-// Cards Specification: The Midnight Bazaar (15 Initial Cards)
+// Cards Specification: The Midnight Bazaar (15 Initial Cards + Economy & Sell Effects)
 export const MIDNIGHT_BAZAAR_CARDS = [
   {
     id: "midnight_key",
@@ -9,6 +9,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 1,
     attack: 1,
     health: 2,
+    saleValue: 2,
     rarity: "common",
     tags: ["metal", "junk"],
     keywords: ["deathrattle"],
@@ -18,6 +19,10 @@ export const MIDNIGHT_BAZAAR_CARDS = [
       engine.drawCards(isPlayer ? "player" : "enemy", 1);
       engine.addKassa(isPlayer ? "player" : "enemy", 1);
       engine.log(`${self.name} breaks, revealing a forgotten secret (+1 card, +1 Kassa)!`);
+    },
+    onSold: (self, engine, isPlayer) => {
+      engine.drawCards(isPlayer ? "player" : "enemy", 1);
+      engine.log(`${self.name} pawned off (+1 card drawn)!`);
     }
   },
   {
@@ -29,6 +34,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 2,
     attack: 2,
     health: 3,
+    saleValue: 3,
     rarity: "common",
     tags: ["ceramic", "mystery"],
     keywords: ["deathrattle", "cursed"],
@@ -48,6 +54,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 1,
     attack: 2,
     health: 1,
+    saleValue: 2,
     rarity: "common",
     tags: ["light", "unstable"],
     keywords: ["secondhand"],
@@ -71,6 +78,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 1,
     attack: 4,
     health: 1,
+    saleValue: 2,
     rarity: "common",
     tags: ["weapon", "cursed"],
     keywords: ["cursed"],
@@ -90,6 +98,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 3,
     attack: 1,
     health: 5,
+    saleValue: 4,
     rarity: "uncommon",
     tags: ["container", "mystery"],
     keywords: ["deathrattle"],
@@ -108,6 +117,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 2,
     attack: 2,
     health: 2,
+    saleValue: 3,
     rarity: "rare",
     tags: ["toy", "occult"],
     keywords: ["deathrattle"],
@@ -121,6 +131,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
         attack: 1,
         health: 1,
         maxHealth: 1,
+        saleValue: 1,
         hasSwift: true,
         description: "Swift"
       });
@@ -134,6 +145,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     faction: "midnight_bazaar",
     type: "trick",
     cost: 1,
+    saleValue: 1,
     rarity: "common",
     tags: ["magic", "recycle"],
     keywords: ["recycle"],
@@ -155,6 +167,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     faction: "midnight_bazaar",
     type: "trick",
     cost: 0,
+    saleValue: 1,
     rarity: "common",
     tags: ["currency", "junk"],
     keywords: ["ramp", "cursed"],
@@ -175,6 +188,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 2,
     attack: 1,
     health: 4,
+    saleValue: 3,
     rarity: "uncommon",
     tags: ["glass", "cursed"],
     keywords: [],
@@ -196,6 +210,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     faction: "midnight_bazaar",
     type: "trick",
     cost: 2,
+    saleValue: 2,
     rarity: "rare",
     tags: ["cursed", "paper"],
     keywords: ["sacrifice"],
@@ -216,6 +231,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 1,
     attack: 1,
     health: 1,
+    saleValue: 2,
     rarity: "common",
     tags: ["beast", "scavenger"],
     keywords: [],
@@ -235,10 +251,11 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 2,
     attack: 0,
     health: 4,
+    saleValue: 3,
     rarity: "uncommon",
     tags: ["oddity", "disguise"],
     keywords: [],
-    description: "Copies the Attack and Health of the opposing enemy when played.",
+    description: "Copies the Attack and Health of opposing enemy when played.",
     flavor: "Smile, and it smiles right back with your teeth.",
     onPlay: (self, board, engine, isPlayer, fromDiscard, laneIndex, opposingUnit) => {
       if (opposingUnit) {
@@ -258,6 +275,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 3,
     attack: 1,
     health: 5,
+    saleValue: 4,
     rarity: "rare",
     tags: ["occult", "relic"],
     keywords: [],
@@ -280,6 +298,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 2,
     attack: 2,
     health: 3,
+    saleValue: 4,
     rarity: "epic",
     tags: ["gear", "temporal"],
     keywords: ["reclaim"],
@@ -298,6 +317,7 @@ export const MIDNIGHT_BAZAAR_CARDS = [
     cost: 5,
     attack: 4,
     health: 8,
+    saleValue: 7,
     rarity: "legendary",
     tags: ["market", "cursed"],
     keywords: ["reclaim", "engine"],

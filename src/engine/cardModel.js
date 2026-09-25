@@ -11,6 +11,7 @@ export function createCardInstance(cardData) {
     type: cardData.type, // 'item', 'trick', 'upgrade'
     cost: cardData.cost,
     baseCost: cardData.cost,
+    saleValue: cardData.saleValue || Math.max(1, Math.floor(cardData.cost * 1.5)),
     attack: cardData.attack || 0,
     baseAttack: cardData.attack || 0,
     health: cardData.health || 0,
@@ -26,6 +27,7 @@ export function createCardInstance(cardData) {
     tempAttackBonus: 0,
     // Method delegates
     onHealed: cardData.onHealed,
+    onSold: cardData.onSold,
     passiveAdjacency: cardData.passiveAdjacency,
     onNeighborDamaged: cardData.onNeighborDamaged,
     onRoundStart: cardData.onRoundStart,

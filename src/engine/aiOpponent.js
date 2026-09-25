@@ -1,51 +1,80 @@
-// AI Opponent Decision Engine (Symmetrical Rules)
+// AI Opponent Decision Engine (Active, Symmetrical & Asynchronous)
 export class AIOpponent {
   constructor(difficulty = "normal") {
     this.difficulty = difficulty; // "easy", "normal", "hard"
   }
 
-  takeTurn(engine) {
-    if (engine.phase !== "PLANNING") return;
+  async takeTurnAsync(engine) {
+    if (engine.phase !== "OPPONENT_PLANNING") return;
 
     const enemy = engine.enemy;
-    const hand = enemy.deckManager.hand;
-    const enemyLanes = engine.enemyLanes;
-    const playerLanes = engine.playerLanes;
+    engine.log(`🤖 ${enemy.name} is sizing up the shop counter...`);
+    await this.delay(300);
 
-    engine.log(`🤖 ${enemy.name} is planning tactics...`);
-
-    // 1. Signature Ability Check: If Kassa meter is full, unleash it!
+    // 1. Signature Ability Check: If Kassa is full, unleash it!
     if (enemy.kassa >= enemy.kassaMax && enemy.signature) {
       engine.useSignatureAbility(false);
+      engine.log(`⚡ ${enemy.name} unleashed signature: ${enemy.signature.name}!`);
+      await this.delay(350);
     }
 
-    // 2. Play items from hand onto lanes
-    // Sort playable cards by cost descending to play high-value cards first
-    const playableCards = hand
-      .filter(card => card.cost <= enemy.energy)
-      .sort((a, b) => b.cost - a.cost);
-
-    for (const card of playableCards) {
-      if (enemy.energy < card.cost) continue;
-
-      if (card.type === "item") {
-        const laneChoice = this.chooseLaneForItem(card, enemyLanes, playerLanes);
-        if (laneChoice !== null) {
-          engine.playCard(false, card.instanceId, laneChoice);
+    // 2. Selling Evaluation:
+    // If AI controls a heavily damaged unit (<= 1 HP) and has low energy (< 2), sell it to gain coins/benefits!
+    if (engine.salesThisRound.enemy < engine.maxSalesPerRound) {
+      let sellCandidateIdx = null;
+      engine.enemyLanes.forEach((u, idx) => {
+        if (u && (u.health <= 1 || u.onSold) && enemy.energy < 2) {
+          sellCandidateIdx = idx;
         }
-      } else if (card.type === "trick") {
-        engine.playCard(false, card.instanceId);
+      });
+      if (sellCandidateIdx !== null) {
+        engine.sellUnit(false, sellCandidateIdx);
+        await this.delay(300);
       }
     }
 
-    // 3. Use Shopkeeper active ability if Energy remains
+    // 3. Play Cards from Hand
+    // Prioritize high-threat counter-placements
+    let attempts = 0;
+    while (attempts < 5) {
+      attempts++;
+      const hand = enemy.deckManager.hand;
+      const affordable = hand.filter(c => c.cost <= enemy.energy);
+      if (affordable.length === 0) break;
+
+      // Sort by cost descending (on-curve)
+      affordable.sort((a, b) => b.cost - a.cost);
+      const cardToPlay = affordable[0];
+
+      if (cardToPlay.type === "item") {
+        const laneChoice = this.chooseLaneForItem(cardToPlay, engine.enemyLanes, engine.playerLanes);
+        if (laneChoice !== null) {
+          const success = engine.playCard(false, cardToPlay.instanceId, laneChoice);
+          if (success) {
+            await this.delay(350);
+          } else {
+            break;
+          }
+        } else {
+          break; // Board full
+        }
+      } else if (cardToPlay.type === "trick") {
+        const success = engine.playCard(false, cardToPlay.instanceId);
+        if (success) {
+          await this.delay(300);
+        } else {
+          break;
+        }
+      }
+    }
+
+    // 4. Shopkeeper Active Abilities
     for (const ability of enemy.abilities) {
       if (enemy.energy >= ability.cost) {
         if (ability.targetType === "friendly_item") {
-          // Find friendly item with lowest health
           let targetIdx = null;
           let lowestHp = 999;
-          enemyLanes.forEach((u, idx) => {
+          engine.enemyLanes.forEach((u, idx) => {
             if (u && u.health < lowestHp) {
               lowestHp = u.health;
               targetIdx = idx;
@@ -53,14 +82,17 @@ export class AIOpponent {
           });
           if (targetIdx !== null) {
             engine.useShopkeeperAbility(false, ability.id, targetIdx);
+            await this.delay(250);
           }
         } else if (ability.targetType === "none" || ability.targetType === "any_friendly") {
           engine.useShopkeeperAbility(false, ability.id);
+          await this.delay(250);
         }
       }
     }
 
-    engine.log(`🤖 ${enemy.name} completed planning.`);
+    engine.log(`🤖 ${enemy.name} completed preparations.`);
+    await this.delay(200);
   }
 
   chooseLaneForItem(card, enemyLanes, playerLanes) {
@@ -71,22 +103,23 @@ export class AIOpponent {
 
     if (emptyLanes.length === 0) return null;
 
-    // Difficulty heuristic:
-    // Normal / Hard: Prioritize blocking player threats (uncontested lanes where player has an attacker)
+    // Prioritize blocking incoming player attack threats
     const dangerousLanes = emptyLanes.filter(idx => playerLanes[idx] !== null && playerLanes[idx].attack > 0);
     if (dangerousLanes.length > 0) {
-      // Pick the lane with the highest player attack threat
       dangerousLanes.sort((a, b) => playerLanes[b].attack - playerLanes[a].attack);
       return dangerousLanes[0];
     }
 
-    // Otherwise, pick lane opposite an empty player lane to threaten direct face damage
+    // Threaten unblocked player lanes for face damage
     const openOpponentLanes = emptyLanes.filter(idx => playerLanes[idx] === null);
     if (openOpponentLanes.length > 0) {
       return openOpponentLanes[0];
     }
 
-    // Fallback: Pick any empty lane
     return emptyLanes[0];
+  }
+
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }

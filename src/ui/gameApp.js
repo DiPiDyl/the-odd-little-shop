@@ -1,31 +1,61 @@
-// The Odd Little Shop — Master UI & Game Controller
+// The Odd Little Shop — Master Application Controller & Router (Overhauled)
 import { CombatEngine, CombatPhase } from "../engine/combatEngine.js";
 import { AIOpponent } from "../engine/aiOpponent.js";
 import { createCardInstance } from "../engine/cardModel.js";
 import { COZY_COUNTER_CARDS } from "../data/cardsCozyCounter.js";
 import { MIDNIGHT_BAZAAR_CARDS } from "../data/cardsMidnightBazaar.js";
-import { SHOPKEEPERS } from "../data/shopkeepers.js";
 import { ENEMY_ENCOUNTERS } from "../data/enemies.js";
 import { RELICS } from "../data/relics.js";
 import { soundFx } from "../audio/soundEffects.js";
 import { SaveManager } from "../save/saveManager.js";
 
+import { MainMenuScreen } from "./mainMenuScreen.js";
+import { DeckbuilderScreen } from "./deckbuilderScreen.js";
+import { PackOpeningScreen } from "./packOpeningScreen.js";
+import { PawnShopModal } from "./pawnShopModal.js";
+
 export class GameApp {
   constructor() {
     this.saveData = SaveManager.loadSave();
-    this.engine = null;
-    this.ai = new AIOpponent("normal");
-    this.selectedHandCard = null;
-    this.selectedAbility = null;
+    this.currentScreen = "main_menu"; // 'main_menu', 'battle', 'deckbuilder', 'packs'
+
     this.allCards = [...COZY_COUNTER_CARDS, ...MIDNIGHT_BAZAAR_CARDS];
     this.currentFaction = "cozy_counter";
     this.currentEnemyId = "rowdy_imp";
 
-    this.initBattle();
+    this.engine = null;
+    this.ai = new AIOpponent("normal");
+    this.selectedHandCard = null;
+    this.selectedAbility = null;
+    this.selectedBoardLane = null; // For inspecting / selling
+
+    // Sub-screens
+    this.mainMenu = new MainMenuScreen(this);
+    this.deckbuilder = new DeckbuilderScreen(this);
+    this.packScreen = new PackOpeningScreen(this);
+    this.pawnModal = new PawnShopModal(this);
+
     this.setupGlobalEvents();
+    this.render();
   }
 
-  initBattle(faction = "cozy_counter", enemyEncounterId = "rowdy_imp") {
+  setupGlobalEvents() {
+    window.addEventListener("click", () => {
+      soundFx.init();
+    }, { once: true });
+  }
+
+  showScreen(screenName) {
+    this.currentScreen = screenName;
+    soundFx.playCardSwoosh();
+    this.render();
+  }
+
+  saveState() {
+    SaveManager.save(this.saveData);
+  }
+
+  startSelectedBattle(faction = "cozy_counter", enemyEncounterId = "rowdy_imp") {
     this.currentFaction = faction;
     this.currentEnemyId = enemyEncounterId;
 
@@ -33,15 +63,15 @@ export class GameApp {
     const playerShopkeeperId = faction === "cozy_counter" ? "cozy_curator" : "midnight_broker";
     const enemyShopkeeperId = enemyData.shopkeeperId;
 
-    // Build 20-card starting deck from faction cards
-    const cardPool = faction === "cozy_counter" ? COZY_COUNTER_CARDS : MIDNIGHT_BAZAAR_CARDS;
-    const playerDeckInstances = [];
-    for (let i = 0; i < 20; i++) {
-      const template = cardPool[i % cardPool.length];
-      playerDeckInstances.push(createCardInstance(template));
-    }
+    // Load active custom 20-card deck
+    const deckIds = this.saveData.decks[faction] || [];
+    const allFactionCards = faction === "cozy_counter" ? COZY_COUNTER_CARDS : MIDNIGHT_BAZAAR_CARDS;
+    const playerDeckInstances = deckIds.map(id => {
+      const template = allFactionCards.find(c => c.id === id) || allFactionCards[0];
+      return createCardInstance(template);
+    });
 
-    // Build enemy deck instances
+    // Enemy deck instances
     const enemyCardPool = enemyData.deckFaction === "cozy_counter" ? COZY_COUNTER_CARDS : MIDNIGHT_BAZAAR_CARDS;
     const enemyDeckInstances = enemyData.deckPreset.map(cardId => {
       const template = enemyCardPool.find(c => c.id === cardId) || enemyCardPool[0];
@@ -52,24 +82,21 @@ export class GameApp {
       playerShopkeeperId,
       enemyShopkeeperId,
       enemyName: enemyData.name,
-      enemyTitle: enemyData.title || "Rival Customer",
+      enemyTitle: enemyData.title || "Rival Merchant",
       enemyEmoji: enemyData.emoji,
       enemyHealth: enemyData.maxHealth,
       specialMechanic: enemyData.specialMechanic,
       playerDeckInstances,
       enemyDeckInstances,
-      relics: [RELICS[0], RELICS[1]] // Start with Old Shop Bell & Lucky Jade Plant
+      initialCoins: this.saveData.currency.coins || 0,
+      relics: [RELICS[0], RELICS[1]],
+      aiController: this.ai
     });
 
     this.engine.subscribe((event, data) => this.onEngineEvent(event, data));
+    this.currentScreen = "battle";
     this.render();
     this.engine.startBattle();
-  }
-
-  setupGlobalEvents() {
-    window.addEventListener("click", () => {
-      soundFx.init(); // Unlock AudioContext on first user interaction
-    }, { once: true });
   }
 
   onEngineEvent(event, data) {
@@ -80,6 +107,13 @@ export class GameApp {
       this.render();
     } else if (event === "board_updated" || event === "phase_changed") {
       this.render();
+    } else if (event === "unit_sold") {
+      soundFx.playSellRegister();
+      this.saveData.currency.coins = this.engine.playerCoins;
+      this.saveState();
+      this.render();
+    } else if (event === "lane_clashing") {
+      this.render();
     } else if (event === "lane_resolved") {
       soundFx.playDamageImpact();
       this.render();
@@ -89,28 +123,45 @@ export class GameApp {
     } else if (event === "shop_opened") {
       soundFx.playCounterBell();
       this.render();
-      // Execute AI turn before resolution
-      setTimeout(() => {
-        this.ai.takeTurn(this.engine);
-        this.render();
-      }, 300);
     } else if (event === "battle_ended") {
       this.render();
+      if (data.winner === "player") {
+        this.saveData.currency.coins += 50;
+        this.saveData.meta.completedRuns = (this.saveData.meta.completedRuns || 0) + 1;
+        this.saveState();
+      }
       setTimeout(() => {
         this.showBattleEndModal(data.winner);
       }, 1000);
     }
   }
 
-  // --- Rendering UI ---
+  // --- Master Render ---
 
   render() {
     const appEl = document.getElementById("app");
     if (!appEl) return;
 
+    if (this.currentScreen === "main_menu") {
+      appEl.innerHTML = this.mainMenu.render();
+    } else if (this.currentScreen === "deckbuilder") {
+      appEl.innerHTML = this.deckbuilder.render();
+    } else if (this.currentScreen === "packs") {
+      appEl.innerHTML = this.packScreen.render();
+    } else if (this.currentScreen === "battle") {
+      this.renderBattleArena(appEl);
+    }
+  }
+
+  renderBattleArena(appEl) {
+    if (!this.engine) return;
+
+    const isPlanning = this.engine.phase === CombatPhase.PLAYER_PLANNING;
+    const selectedUnitOnBoard = this.selectedBoardLane !== null ? this.engine.playerLanes[this.selectedBoardLane] : null;
+
     appEl.innerHTML = `
       <div class="battle-arena">
-        <!-- Left Sidebar: Player Info & Abilities -->
+        <!-- Left Sidebar: Shopkeeper Info & Deck Status -->
         <div class="sidebar-panel">
           <div class="shopkeeper-card">
             <div class="shopkeeper-portrait">${this.engine.player.emoji}</div>
@@ -134,26 +185,47 @@ export class GameApp {
               <div class="meter-fill-kassa" style="width: ${(this.engine.player.kassa / this.engine.player.kassaMax) * 100}%"></div>
               <span class="meter-label">Kassa: ${this.engine.player.kassa} / ${this.engine.player.kassaMax}</span>
             </div>
+
+            <div style="margin-top: 6px; font-weight: bold; font-size: 0.85rem; color: #E65100;">
+              🪙 Coins: ${this.engine.playerCoins}
+            </div>
           </div>
+
+          <!-- Unit Selling Inspection Box -->
+          ${selectedUnitOnBoard ? `
+            <div class="sell-action-box">
+              <div style="font-weight: bold; font-size: 0.85rem;">📦 Select Stock: ${selectedUnitOnBoard.name}</div>
+              <div style="font-size: 0.75rem; color: #555;">Value: 🪙 ${selectedUnitOnBoard.saleValue} Coins</div>
+              <button class="btn btn-sm btn-primary" style="margin-top: 6px; width: 100%;"
+                ${!isPlanning || this.engine.salesThisRound.player >= this.engine.maxSalesPerRound ? 'disabled' : ''}
+                onclick="window.app.sellSelectedUnit()">
+                💰 SELL UNIT (+${selectedUnitOnBoard.saleValue} 🪙)
+              </button>
+            </div>
+          ` : `
+            <div style="font-size: 0.75rem; color: #888; text-align: center; border: 1px dashed #D7CCC8; padding: 6px; border-radius: 6px;">
+              Click any friendly unit to inspect / sell stock (1 sale/round limit).
+            </div>
+          `}
 
           <!-- Shopkeeper Abilities -->
           <div class="abilities-list">
-            <h4 style="font-size: 0.85rem; color: var(--wood-med);">SHOPKEEPER ABILITIES</h4>
+            <h4 style="font-size: 0.82rem; color: var(--wood-med);">ABILITIES</h4>
             ${this.engine.player.abilities.map(ab => `
               <button class="ability-btn" 
-                ${this.engine.player.energy < ab.cost || this.engine.phase !== CombatPhase.PLANNING ? 'disabled' : ''}
+                ${this.engine.player.energy < ab.cost || !isPlanning ? 'disabled' : ''}
                 onclick="window.app.onAbilityClicked('${ab.id}')">
                 <strong>${ab.emoji} ${ab.name}</strong> (${ab.cost} Energy)<br/>
-                <span style="font-size: 0.72rem; color: #555;">${ab.description}</span>
+                <span style="font-size: 0.7rem; color: #555;">${ab.description}</span>
               </button>
             `).join('')}
 
             <!-- Signature Ability -->
-            <button class="ability-btn" style="border: 2px solid var(--amber-gold); background: #FFF9C4;"
-              ${this.engine.player.kassa < this.engine.player.kassaMax || this.engine.phase !== CombatPhase.PLANNING ? 'disabled' : ''}
+            <button class="ability-btn signature-btn"
+              ${this.engine.player.kassa < this.engine.player.kassaMax || !isPlanning ? 'disabled' : ''}
               onclick="window.app.onSignatureClicked()">
               <strong>${this.engine.player.signature.emoji} ${this.engine.player.signature.name}</strong> (Full Kassa)<br/>
-              <span style="font-size: 0.72rem; color: #555;">${this.engine.player.signature.description}</span>
+              <span style="font-size: 0.7rem; color: #555;">${this.engine.player.signature.description}</span>
             </button>
           </div>
 
@@ -162,6 +234,7 @@ export class GameApp {
             <div>🎴 Draw: <strong>${this.engine.player.deckManager.drawPile.length}</strong></div>
             <div>🗑️ Discard: <strong>${this.engine.player.deckManager.discardPile.length}</strong></div>
           </div>
+          <button class="btn btn-sm" onclick="window.app.showScreen('main_menu')">🏳️ Surrender / Menu</button>
         </div>
 
         <!-- Center Battlefield (5 Lanes) -->
@@ -185,17 +258,14 @@ export class GameApp {
 
           <!-- The 5 Combat Lanes -->
           <div class="lanes-board">
-            <!-- Enemy Lanes Row -->
             <div class="lanes-row">
               ${this.renderLanes(this.engine.enemyLanes, false)}
             </div>
 
-            <!-- Lane Divider / Clash Line -->
             <div class="lane-divider">
               ⚔️ 5-LANE CLASH COUNTER ⚔️
             </div>
 
-            <!-- Player Lanes Row -->
             <div class="lanes-row">
               ${this.renderLanes(this.engine.playerLanes, true)}
             </div>
@@ -205,17 +275,16 @@ export class GameApp {
           <div class="player-controls">
             <div class="action-bar">
               <div>
-                <span style="font-weight: bold; font-size: 1.05rem;">Phase: ${this.engine.phase}</span>
+                <span style="font-weight: bold; font-size: 1rem;">Phase: ${this.engine.phase}</span>
                 <span style="margin-left: 12px; color: var(--wood-med);">Round: ${this.engine.roundNumber}</span>
               </div>
               <button class="btn-open-shop" 
-                ${this.engine.phase !== CombatPhase.PLANNING ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}
+                ${!isPlanning ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}
                 onclick="window.app.onOpenTheShopClicked()">
                 🔔 OPEN THE SHOP!
               </button>
             </div>
 
-            <!-- Hand Cards -->
             <div class="hand-container">
               ${this.renderHandCards()}
             </div>
@@ -248,6 +317,7 @@ export class GameApp {
     return lanes.map((unit, idx) => {
       const isLocked = isPlayer && this.engine.lockedPlayerLanes[idx];
       const isSelectable = isPlayer && this.selectedHandCard && this.selectedHandCard.type === "item" && unit === null && !isLocked;
+      const isLaneSelected = isPlayer && this.selectedBoardLane === idx;
 
       if (isLocked) {
         return `
@@ -262,12 +332,12 @@ export class GameApp {
       if (unit) {
         const extraClass = unit.keywords.includes("taunt") ? "taunt" : (unit.hasSwift ? "swift" : "");
         return `
-          <div class="lane-slot" onclick="window.app.onLaneSlotClicked(${idx}, ${isPlayer})">
+          <div class="lane-slot ${isLaneSelected ? 'selected-lane' : ''}" onclick="window.app.onLaneSlotClicked(${idx}, ${isPlayer})">
             <span class="lane-badge">LANE ${idx + 1}</span>
             <div class="card-unit ${extraClass}">
               <div class="card-header">
                 <span class="card-cost">${unit.cost}</span>
-                <span style="font-size: 0.7rem; text-transform: uppercase;">${unit.tags[0] || 'Item'}</span>
+                <span style="font-size: 0.65rem; text-transform: uppercase;">${unit.tags[0] || 'Item'}</span>
               </div>
               <div class="card-emoji">${unit.emoji}</div>
               <div class="card-name">${unit.name}</div>
@@ -332,18 +402,18 @@ export class GameApp {
   // --- User Interactions ---
 
   onHandCardClicked(instanceId) {
-    if (this.engine.phase !== CombatPhase.PLANNING) return;
+    if (this.engine.phase !== CombatPhase.PLAYER_PLANNING) return;
 
     const card = this.engine.player.deckManager.hand.find(c => c.instanceId === instanceId);
     if (!card) return;
 
     if (this.selectedHandCard && this.selectedHandCard.instanceId === instanceId) {
-      this.selectedHandCard = null; // Deselect
+      this.selectedHandCard = null;
     } else {
       this.selectedHandCard = card;
+      this.selectedBoardLane = null;
       soundFx.playWoodClunk();
       if (card.type === "trick") {
-        // Immediate cast trick if self-targeting
         const success = this.engine.playCard(true, card.instanceId);
         if (success) {
           soundFx.playHealChime();
@@ -380,7 +450,23 @@ export class GameApp {
         soundFx.playHealChime();
         this.selectedAbility = null;
       }
+    } else {
+      // Toggle lane inspection for selling
+      if (this.engine.playerLanes[laneIndex]) {
+        this.selectedBoardLane = this.selectedBoardLane === laneIndex ? null : laneIndex;
+        soundFx.playWoodClunk();
+      }
     }
+    this.render();
+  }
+
+  sellSelectedUnit() {
+    if (this.selectedBoardLane === null) return;
+    const success = this.engine.sellUnit(true, this.selectedBoardLane);
+    if (success) {
+      this.selectedBoardLane = null;
+    }
+    this.render();
   }
 
   onAbilityClicked(abilityId) {
@@ -403,11 +489,9 @@ export class GameApp {
     this.render();
   }
 
-  onOpenTheShopClicked() {
-    this.engine.openTheShop();
+  async onOpenTheShopClicked() {
+    await this.engine.openTheShop();
   }
-
-  // --- Modals (Collection & Run Selection) ---
 
   showCollectionModal() {
     const modalEl = document.createElement("div");
@@ -446,49 +530,8 @@ export class GameApp {
     document.body.appendChild(modalEl);
   }
 
-  showNewGameModal() {
-    const modalEl = document.createElement("div");
-    modalEl.className = "modal-overlay";
-    modalEl.id = "new-game-modal";
-    modalEl.innerHTML = `
-      <div class="modal-content" style="max-width: 600px; text-align: center;">
-        <h2>🏪 Choose Your Faction & Battle</h2>
-        <p style="margin: 12px 0; color: #555;">Select your shopkeeping philosophy for this encounter:</p>
-        
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0;">
-          <div style="background: #FFF; border: 2px solid var(--cozy-green); border-radius: 8px; padding: 16px; cursor: pointer;"
-            onclick="window.app.startNewBattle('cozy_counter', 'rowdy_imp')">
-            <div style="font-size: 3rem;">🕯️</div>
-            <h3>The Cozy Counter</h3>
-            <p style="font-size: 0.8rem; color: #666; margin-top: 6px;">
-              Warmth, healing, adjacency buffs, and durable household items.
-            </p>
-            <button class="btn btn-primary" style="margin-top: 12px;">Play Cozy Counter</button>
-          </div>
-
-          <div style="background: #FFF; border: 2px solid var(--bazaar-accent); border-radius: 8px; padding: 16px; cursor: pointer;"
-            onclick="window.app.startNewBattle('midnight_bazaar', 'fussy_collector')">
-            <div style="font-size: 3rem;">🌙</div>
-            <h3>The Midnight Bazaar</h3>
-            <p style="font-size: 0.8rem; color: #666; margin-top: 6px;">
-              Reclaim, secondhand power, discard tempo, and cursed oddities.
-            </p>
-            <button class="btn btn-primary" style="margin-top: 12px;">Play Midnight Bazaar</button>
-          </div>
-        </div>
-
-        <button class="btn" onclick="window.app.startNewBattle('cozy_counter', 'property_inspector')">
-          ⚔️ Boss Encounter: The Property Inspector (Mr. Grimshaw)
-        </button>
-      </div>
-    `;
-    document.body.appendChild(modalEl);
-  }
-
-  startNewBattle(faction, enemyId) {
-    const modal = document.getElementById("new-game-modal");
-    if (modal) modal.remove();
-    this.initBattle(faction, enemyId);
+  showSettingsModal() {
+    alert("Audio Settings:\n• Web Audio Sound Effects: Enabled (100%)\n• Master Volume: 100%\n• Reduced Motion: Off\n• Save Version: 2.0 (Local)");
   }
 
   showBattleEndModal(winner) {
@@ -502,11 +545,11 @@ export class GameApp {
         <div style="font-size: 3.5rem; margin-bottom: 8px;">${isWin ? '🏆' : '💀'}</div>
         <h2>${isWin ? 'Shop Victorious!' : 'Shop Overrun!'}</h2>
         <p style="margin: 12px 0; color: #555;">
-          ${isWin ? 'Your living merchandise stood ground and protected the counter!' : 'The dispute overwhelmed your stock. Tidy up the counter and try again!'}
+          ${isWin ? 'Your living merchandise stood ground and protected the counter! Awarded +50 Coins 🪙!' : 'The dispute overwhelmed your stock. Tidy up the counter and try again!'}
         </p>
         <button class="btn btn-primary" style="font-size: 1.1rem; padding: 10px 24px;"
-          onclick="document.getElementById('battle-end-modal').remove(); window.app.showNewGameModal();">
-          Start Next Encounter ➔
+          onclick="document.getElementById('battle-end-modal').remove(); window.app.showScreen('main_menu');">
+          Return to Shop Hub ➔
         </button>
       </div>
     `;

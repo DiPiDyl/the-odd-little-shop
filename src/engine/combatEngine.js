@@ -1,12 +1,12 @@
-// Core 5-Lane Deterministic Combat Engine & State Machine
+// Core 5-Lane Deterministic Combat Engine & State Machine (Overhauled)
 import { DeckManager } from "./deckManager.js";
-import { createCardInstance } from "./cardModel.js";
 import { SHOPKEEPERS } from "../data/shopkeepers.js";
 
 export const CombatPhase = {
   ROUND_START: "ROUND_START",
   DRAW: "DRAW",
-  PLANNING: "PLANNING",
+  PLAYER_PLANNING: "PLAYER_PLANNING",
+  OPPONENT_PLANNING: "OPPONENT_PLANNING",
   OPEN_SHOP: "OPEN_SHOP",
   RESOLUTION: "RESOLUTION",
   ROUND_END: "ROUND_END",
@@ -24,6 +24,13 @@ export class CombatEngine {
     this.playerLanes = [null, null, null, null, null];
     this.enemyLanes = [null, null, null, null, null];
     this.lockedPlayerLanes = [false, false, false, false, false];
+
+    // Economy & Selling
+    this.playerCoins = config.initialCoins || 0;
+    this.enemyCoins = 0;
+    this.salesThisRound = { player: 0, enemy: 0 };
+    this.maxSalesPerRound = 1;
+    this.soldStock = { player: [], enemy: [] };
 
     // Player State
     const playerShopkeeperData = SHOPKEEPERS[config.playerShopkeeperId || "cozy_curator"];
@@ -71,6 +78,7 @@ export class CombatEngine {
     this.relics = config.relics || [];
     this.relicState = {};
     this.winner = null;
+    this.aiController = config.aiController || null;
   }
 
   subscribe(listener) {
@@ -89,7 +97,7 @@ export class CombatEngine {
   // --- Round Flow & Lifecycle ---
 
   startBattle() {
-    this.log(`🏪 Welcome to The Odd Little Shop! Battle commences between ${this.player.name} and ${this.enemy.name}!`);
+    this.log(`🏪 Welcome to The Odd Little Shop! Battle commences: ${this.player.name} vs ${this.enemy.name}!`);
     this.roundNumber = 0;
     this.startNextRound();
   }
@@ -100,15 +108,16 @@ export class CombatEngine {
     this.roundNumber += 1;
     this.phase = CombatPhase.ROUND_START;
     this.destroyedThisRound = { player: [], enemy: [] };
+    this.salesThisRound = { player: 0, enemy: 0 };
 
-    // Calculate base Energy: Round 1: 3, Round 2: 4, Round 3+: 5
+    // Progressive Energy: Round 1: 3, Round 2: 4, Round 3+: 5
     const baseEnergy = Math.min(5, 2 + this.roundNumber);
     this.player.maxEnergy = baseEnergy;
     this.player.energy = baseEnergy;
     this.enemy.maxEnergy = baseEnergy;
     this.enemy.energy = baseEnergy;
 
-    // Reset lane locks from boss
+    // Reset lane locks
     this.lockedPlayerLanes = [false, false, false, false, false];
 
     // Relic hooks
@@ -128,7 +137,7 @@ export class CombatEngine {
     // Board start of round triggers
     this.processStartOfRoundTriggers();
 
-    // Move to Draw Phase
+    // Execute Draw Phase
     this.executeDrawPhase();
   }
 
@@ -153,20 +162,83 @@ export class CombatEngine {
       this.log("🔄 Player draw pile empty: Shuffled Discard Pile back into Draw Pile!");
     });
     const eDrawn = this.enemy.deckManager.drawCards(cardsToDraw, () => {
-      this.log("🔄 Enemy draw pile empty: Shuffled Discard Pile back into Draw Pile!");
+      this.log("🔄 Opponent draw pile empty: Shuffled Discard Pile back into Draw Pile!");
     });
 
-    this.log(`Player drew ${pDrawn.length} cards. Enemy drew ${eDrawn.length} cards.`);
+    this.log(`Drew ${pDrawn.length} cards. (Hand: ${this.player.deckManager.hand.length}/7)`);
     this.notify("draw_completed", { playerDrawn: pDrawn, enemyDrawn: eDrawn });
 
-    this.phase = CombatPhase.PLANNING;
+    this.phase = CombatPhase.PLAYER_PLANNING;
     this.notify("phase_changed", { phase: this.phase });
   }
 
-  // --- Planning Actions (Player & AI) ---
+  // --- SELLING MECHANIC (THE SHOP ECONOMY) ---
+
+  canSellUnit(isPlayer, laneIndex) {
+    if (this.phase !== CombatPhase.PLAYER_PLANNING && this.phase !== CombatPhase.OPPONENT_PLANNING) {
+      return { allowed: false, reason: "Can only sell during Planning Phase" };
+    }
+    const currentSales = isPlayer ? this.salesThisRound.player : this.salesThisRound.enemy;
+    if (currentSales >= this.maxSalesPerRound) {
+      return { allowed: false, reason: `Max ${this.maxSalesPerRound} sale per round allowed!` };
+    }
+    const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
+    const unit = lanes[laneIndex];
+    if (!unit) {
+      return { allowed: false, reason: "No unit in that lane to sell" };
+    }
+    return { allowed: true, unit };
+  }
+
+  sellUnit(isPlayer, laneIndex) {
+    const check = this.canSellUnit(isPlayer, laneIndex);
+    if (!check.allowed) {
+      this.log(`⚠️ Cannot sell: ${check.reason}`);
+      return false;
+    }
+
+    const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
+    const unit = lanes[laneIndex];
+    const saleCoins = unit.saleValue || Math.max(1, Math.floor(unit.cost * 1.5));
+
+    // Remove from lane
+    lanes[laneIndex] = null;
+    if (isPlayer) {
+      this.playerCoins += saleCoins;
+      this.salesThisRound.player += 1;
+      this.soldStock.player.push(unit);
+      this.log(`💰 SOLD! ${unit.name} on Lane ${laneIndex + 1} sold for ${saleCoins} Coins! (Total: ${this.playerCoins} 🪙)`);
+    } else {
+      this.enemyCoins += saleCoins;
+      this.salesThisRound.enemy += 1;
+      this.soldStock.enemy.push(unit);
+      this.log(`💰 Opponent liquidated ${unit.name} on Lane ${laneIndex + 1} for ${saleCoins} Coins!`);
+    }
+
+    // Trigger When Sold effect
+    if (unit.onSold) {
+      unit.onSold(unit, this, isPlayer);
+    }
+
+    // Relic triggers
+    if (isPlayer) {
+      this.relics.forEach(r => {
+        if (r.onUnitSold) r.onUnitSold(unit, this);
+      });
+    }
+
+    this.notify("unit_sold", { isPlayer, laneIndex, unit, saleCoins });
+    this.notify("board_updated");
+    return true;
+  }
+
+  // --- PLANNING ACTIONS (CARDS & ABILITIES) ---
 
   canPlayCard(isPlayer, cardInstance, targetLaneIndex = null) {
-    if (this.phase !== CombatPhase.PLANNING) return { allowed: false, reason: "Not in Planning Phase" };
+    const validPhase = isPlayer ? CombatPhase.PLAYER_PLANNING : CombatPhase.OPPONENT_PLANNING;
+    if (this.phase !== validPhase) {
+      return { allowed: false, reason: "Not in active planning phase" };
+    }
     const entity = isPlayer ? this.player : this.enemy;
     const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
 
@@ -237,12 +309,15 @@ export class CombatEngine {
       }
     }
 
+    this.notify("card_played", { isPlayer, card, targetLaneIndex });
     this.notify("board_updated");
     return true;
   }
 
   useShopkeeperAbility(isPlayer, abilityId, targetLaneIndex = null) {
-    if (this.phase !== CombatPhase.PLANNING) return false;
+    const validPhase = isPlayer ? CombatPhase.PLAYER_PLANNING : CombatPhase.OPPONENT_PLANNING;
+    if (this.phase !== validPhase) return false;
+
     const entity = isPlayer ? this.player : this.enemy;
     const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
     const ability = entity.abilities.find(a => a.id === abilityId);
@@ -270,12 +345,15 @@ export class CombatEngine {
 
     entity.energy -= ability.cost;
     ability.execute(target, this, isPlayer);
+    this.notify("ability_used", { isPlayer, ability, target });
     this.notify("board_updated");
     return true;
   }
 
   useSignatureAbility(isPlayer) {
-    if (this.phase !== CombatPhase.PLANNING) return false;
+    const validPhase = isPlayer ? CombatPhase.PLAYER_PLANNING : CombatPhase.OPPONENT_PLANNING;
+    if (this.phase !== validPhase) return false;
+
     const entity = isPlayer ? this.player : this.enemy;
     const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
 
@@ -286,26 +364,35 @@ export class CombatEngine {
 
     entity.kassa = 0; // Consume meter
     entity.signature.execute(lanes, this, isPlayer);
+    this.notify("signature_used", { isPlayer, signature: entity.signature });
     this.notify("board_updated");
     return true;
   }
 
-  // --- OPEN THE SHOP & RESOLUTION ---
+  // --- OPEN THE SHOP & ASYNC COMBAT RESOLUTION ---
 
-  openTheShop() {
-    if (this.phase !== CombatPhase.PLANNING) return;
-    this.phase = CombatPhase.OPEN_SHOP;
-    this.log(`🔔 TING! OPEN THE SHOP! All planned stock goes to work!`);
+  async openTheShop() {
+    if (this.phase !== CombatPhase.PLAYER_PLANNING) return;
+
+    this.log(`🔔 TING! OPEN THE SHOP! Committing stock...`);
     this.notify("shop_opened");
 
-    // Begin deterministic combat resolution
-    this.executeCombatResolution();
+    // Phase 1: Opponent Planning
+    this.phase = CombatPhase.OPPONENT_PLANNING;
+    this.notify("phase_changed", { phase: this.phase });
+
+    if (this.aiController) {
+      await this.aiController.takeTurnAsync(this);
+    }
+
+    // Phase 2: Combat Resolution
+    this.phase = CombatPhase.RESOLUTION;
+    this.notify("phase_changed", { phase: this.phase });
+    await this.resolveCombatSequentially();
   }
 
-  executeCombatResolution() {
-    this.phase = CombatPhase.RESOLUTION;
-
-    // Step 1: Pre-Combat triggers (e.g. Jealous Mirror, Looking-Glass)
+  async resolveCombatSequentially() {
+    // Step 1: Pre-Combat triggers
     for (let i = 0; i < 5; i++) {
       const pUnit = this.playerLanes[i];
       const eUnit = this.enemyLanes[i];
@@ -318,14 +405,17 @@ export class CombatEngine {
         eUnit.onPreCombat(eUnit, neighbors, this, i, pUnit);
       }
     }
+    this.notify("board_updated");
+    await this.delay(350);
 
     // Step 2: Lane-by-Lane Clash (Lane 0 to 4)
     for (let laneIdx = 0; laneIdx < 5; laneIdx++) {
-      this.resolveSingleLane(laneIdx);
+      await this.resolveSingleLaneAsync(laneIdx);
       if (this.checkWinLoss()) return;
+      await this.delay(300);
     }
 
-    // Step 3: Round End damage from queues
+    // Step 3: Round End damage queues
     if (this.roundEndDamageQueue.player > 0) {
       this.damageShopkeeper("player", this.roundEndDamageQueue.player, "Pending round penalty");
       this.roundEndDamageQueue.player = 0;
@@ -335,7 +425,7 @@ export class CombatEngine {
       this.roundEndDamageQueue.enemy = 0;
     }
 
-    // Step 4: End of Round triggers on units
+    // Step 4: End of Round triggers
     for (let i = 0; i < 5; i++) {
       const pUnit = this.playerLanes[i];
       if (pUnit && pUnit.onRoundEnd) {
@@ -347,26 +437,26 @@ export class CombatEngine {
       }
     }
 
-    // Relic Round End triggers
     this.relics.forEach(r => {
       if (r.onRoundEnd) r.onRoundEnd(this, true);
     });
 
     if (this.checkWinLoss()) return;
 
-    // Transition to next round
-    setTimeout(() => {
-      this.startNextRound();
-    }, 800);
+    this.phase = CombatPhase.ROUND_END;
+    this.notify("phase_changed", { phase: this.phase });
+    await this.delay(600);
+    this.startNextRound();
   }
 
-  resolveSingleLane(laneIdx) {
+  async resolveSingleLaneAsync(laneIdx) {
     const pUnit = this.playerLanes[laneIdx];
     const eUnit = this.enemyLanes[laneIdx];
 
     if (!pUnit && !eUnit) return; // Empty lane
 
     this.log(`⚔️ Resolving Lane ${laneIdx + 1}...`);
+    this.notify("lane_clashing", { laneIndex: laneIdx });
 
     // Case 1: Both lanes have an item
     if (pUnit && eUnit) {
@@ -374,29 +464,30 @@ export class CombatEngine {
       const eAttack = Math.max(0, eUnit.attack + (eUnit.tempAttackBonus || 0));
 
       if (pUnit.hasSwift && !eUnit.hasSwift) {
-        // Player strikes first
         eUnit.health -= pAttack;
-        this.log(`Swift strike! ${pUnit.name} deals ${pAttack} damage to ${eUnit.name}.`);
+        this.notify("damage_dealt", { target: "enemy_unit", laneIndex: laneIdx, amount: pAttack });
+        this.log(`Swift strike! ${pUnit.name} hits ${eUnit.name} for ${pAttack} damage.`);
         if (eUnit.health > 0) {
           pUnit.health -= eAttack;
+          this.notify("damage_dealt", { target: "player_unit", laneIndex: laneIdx, amount: eAttack });
           this.log(`${eUnit.name} strikes back for ${eAttack} damage.`);
         }
       } else if (eUnit.hasSwift && !pUnit.hasSwift) {
-        // Enemy strikes first
         pUnit.health -= eAttack;
-        this.log(`Swift strike! ${eUnit.name} deals ${eAttack} damage to ${pUnit.name}.`);
+        this.notify("damage_dealt", { target: "player_unit", laneIndex: laneIdx, amount: eAttack });
+        this.log(`Swift strike! ${eUnit.name} hits ${pUnit.name} for ${eAttack} damage.`);
         if (pUnit.health > 0) {
           eUnit.health -= pAttack;
+          this.notify("damage_dealt", { target: "enemy_unit", laneIndex: laneIdx, amount: pAttack });
           this.log(`${pUnit.name} strikes back for ${pAttack} damage.`);
         }
       } else {
-        // Simultaneous damage
         pUnit.health -= eAttack;
         eUnit.health -= pAttack;
+        this.notify("damage_dealt", { target: "both_units", laneIndex: laneIdx, pAmount: eAttack, eAmount: pAttack });
         this.log(`Clash! ${pUnit.name} (${pAttack} dmg) <==> ${eUnit.name} (${eAttack} dmg).`);
       }
 
-      // Check deaths
       this.checkUnitDeath(true, laneIdx);
       this.checkUnitDeath(false, laneIdx);
     } 
@@ -405,21 +496,24 @@ export class CombatEngine {
       const pAttack = Math.max(0, pUnit.attack + (pUnit.tempAttackBonus || 0));
       if (pAttack > 0) {
         this.damageShopkeeper("enemy", pAttack, `Uncontested Lane ${laneIdx + 1}: ${pUnit.name}`);
+        this.notify("damage_dealt", { target: "enemy_shopkeeper", amount: pAttack });
       }
     } 
     // Case 3: Enemy unit attacks uncontested lane
     else if (!pUnit && eUnit) {
       const eAttack = Math.max(0, eUnit.attack + (eUnit.tempAttackBonus || 0));
       if (eAttack > 0) {
-        // Check if player has Taunt elsewhere
+        // Taunt Interception Check
         const tauntIdx = this.playerLanes.findIndex(c => c && c.keywords.includes("taunt"));
         if (tauntIdx !== -1) {
           const tauntUnit = this.playerLanes[tauntIdx];
           tauntUnit.health -= eAttack;
+          this.notify("damage_dealt", { target: "player_unit", laneIndex: tauntIdx, amount: eAttack });
           this.log(`🛡️ ${tauntUnit.name} intercepts the attack on Lane ${laneIdx + 1} taking ${eAttack} damage!`);
           this.checkUnitDeath(true, tauntIdx);
         } else {
           this.damageShopkeeper("player", eAttack, `Uncontested Lane ${laneIdx + 1}: ${eUnit.name}`);
+          this.notify("damage_dealt", { target: "player_shopkeeper", amount: eAttack });
         }
       }
     }
@@ -434,21 +528,17 @@ export class CombatEngine {
       this.log(`💥 ${unit.name} broke and was removed from Lane ${laneIdx + 1}!`);
       lanes[laneIdx] = null;
 
-      // Track death for round
       const deathList = isPlayer ? this.destroyedThisRound.player : this.destroyedThisRound.enemy;
       deathList.push(unit);
 
-      // Trigger On-Death
       if (unit.onDeath) {
         unit.onDeath(unit, this, isPlayer, laneIdx);
       }
-
-      // Trigger global death listeners (e.g. Scrap Rat)
       this.triggerGlobalItemDeath(unit);
 
-      // Route to Discard
       const dm = isPlayer ? this.player.deckManager : this.enemy.deckManager;
       dm.sendToDiscard(unit);
+      this.notify("unit_died", { isPlayer, laneIndex: laneIdx, unit });
     }
   }
 
@@ -502,7 +592,6 @@ export class CombatEngine {
     entity.warmth += amount;
     this.log(`☀️ ${entity.name} gained ${amount} Warmth (Total: ${entity.warmth})!`);
 
-    // Check tapestry or warmth triggers
     const lanes = targetSide === "player" ? this.playerLanes : this.enemyLanes;
     lanes.forEach(unit => {
       if (unit && unit.onWarmthCheck) unit.onWarmthCheck(unit, entity.warmth, this, targetSide === "player");
@@ -591,7 +680,7 @@ export class CombatEngine {
     if (this.player.health <= 0 && this.enemy.health <= 0) {
       this.winner = "draw";
       this.phase = CombatPhase.BATTLE_OVER;
-      this.log(`⚖️ DOUBLE DEFEAT! Both shop counters collapsed in the brawl!`);
+      this.log(`⚖️ DOUBLE DEFEAT! Both counters collapsed in the brawl!`);
       this.notify("battle_ended", { winner: "draw" });
       return true;
     } else if (this.enemy.health <= 0) {
@@ -603,10 +692,14 @@ export class CombatEngine {
     } else if (this.player.health <= 0) {
       this.winner = "enemy";
       this.phase = CombatPhase.BATTLE_OVER;
-      this.log(`💀 DEFEAT! Your shop counter was overrun!`);
+      this.log(`💀 DEFEAT! Your counter was overrun!`);
       this.notify("battle_ended", { winner: "enemy" });
       return true;
     }
     return false;
+  }
+
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
