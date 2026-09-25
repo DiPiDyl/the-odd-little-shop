@@ -1,4 +1,4 @@
-// The Odd Little Shop — Master Application Controller & Router (Overhauled)
+// The Odd Little Shop — Master Application Controller & Router (Hearthstone-Level Visual Polish)
 import { CombatEngine, CombatPhase } from "../engine/combatEngine.js";
 import { AIOpponent } from "../engine/aiOpponent.js";
 import { createCardInstance } from "../engine/cardModel.js";
@@ -8,6 +8,7 @@ import { ENEMY_ENCOUNTERS } from "../data/enemies.js";
 import { RELICS } from "../data/relics.js";
 import { soundFx } from "../audio/soundEffects.js";
 import { SaveManager } from "../save/saveManager.js";
+import { animManager } from "./animationManager.js";
 
 import { MainMenuScreen } from "./mainMenuScreen.js";
 import { DeckbuilderScreen } from "./deckbuilderScreen.js";
@@ -99,26 +100,56 @@ export class GameApp {
     this.engine.startBattle();
   }
 
-  onEngineEvent(event, data) {
-    if (event === "log") {
-      this.updateLogBox();
-    } else if (event === "draw_completed") {
+  async onEngineEvent(event, data) {
+    if (event === "draw_completed") {
       soundFx.playCardSwoosh();
       this.render();
     } else if (event === "board_updated" || event === "phase_changed") {
       this.render();
     } else if (event === "unit_sold") {
-      soundFx.playSellRegister();
+      const slotEl = document.querySelector(`.player-row .lane-slot:nth-child(${data.laneIndex + 1})`);
+      animManager.playSellAnimation(slotEl, data.saleCoins);
       this.saveData.currency.coins = this.engine.playerCoins;
       this.saveState();
       this.render();
     } else if (event === "lane_clashing") {
+      const pSlot = document.querySelector(`.player-row .lane-slot:nth-child(${data.laneIndex + 1})`);
+      const eSlot = document.querySelector(`.enemy-row .lane-slot:nth-child(${data.laneIndex + 1})`);
+      const pUnit = this.engine.playerLanes[data.laneIndex];
+      const eUnit = this.engine.enemyLanes[data.laneIndex];
+
+      if (pUnit && eSlot) {
+        await animManager.playAttackAnimation(pSlot, eSlot, pUnit, true);
+      }
+      if (eUnit && pSlot) {
+        await animManager.playAttackAnimation(eSlot, pSlot, eUnit, false);
+      }
+    } else if (event === "damage_dealt") {
+      if (data.target === "enemy_unit") {
+        const slot = document.querySelector(`.enemy-row .lane-slot:nth-child(${data.laneIndex + 1})`);
+        animManager.playHitReaction(slot, data.amount >= 3);
+        animManager.showFloatingText(slot, `-${data.amount}`, "damage");
+      } else if (data.target === "player_unit") {
+        const slot = document.querySelector(`.player-row .lane-slot:nth-child(${data.laneIndex + 1})`);
+        animManager.playHitReaction(slot, data.amount >= 3);
+        animManager.showFloatingText(slot, `-${data.amount}`, "damage");
+      } else if (data.target === "both_units") {
+        const pSlot = document.querySelector(`.player-row .lane-slot:nth-child(${data.laneIndex + 1})`);
+        const eSlot = document.querySelector(`.enemy-row .lane-slot:nth-child(${data.laneIndex + 1})`);
+        animManager.playHitReaction(pSlot, data.pAmount >= 3);
+        animManager.showFloatingText(pSlot, `-${data.pAmount}`, "damage");
+        animManager.playHitReaction(eSlot, data.eAmount >= 3);
+        animManager.showFloatingText(eSlot, `-${data.eAmount}`, "damage");
+      } else if (data.target === "enemy_shopkeeper") {
+        animManager.playShopkeeperHit("enemy", data.amount);
+      } else if (data.target === "player_shopkeeper") {
+        animManager.playShopkeeperHit("player", data.amount);
+      }
       this.render();
-    } else if (event === "lane_resolved") {
-      soundFx.playDamageImpact();
-      this.render();
-    } else if (event === "shopkeeper_damaged") {
-      soundFx.playDamageImpact();
+    } else if (event === "unit_died") {
+      const rowCls = data.isPlayer ? ".player-row" : ".enemy-row";
+      const slot = document.querySelector(`${rowCls} .lane-slot:nth-child(${data.laneIndex + 1})`);
+      await animManager.playDeathAnimation(slot);
       this.render();
     } else if (event === "shop_opened") {
       soundFx.playCounterBell();
@@ -126,6 +157,7 @@ export class GameApp {
     } else if (event === "battle_ended") {
       this.render();
       if (data.winner === "player") {
+        soundFx.playLegendaryStinger();
         this.saveData.currency.coins += 50;
         this.saveData.meta.completedRuns = (this.saveData.meta.completedRuns || 0) + 1;
         this.saveState();
@@ -136,7 +168,7 @@ export class GameApp {
     }
   }
 
-  // --- Master Render ---
+  // --- Master Viewport Router ---
 
   render() {
     const appEl = document.getElementById("app");
@@ -153,6 +185,8 @@ export class GameApp {
     }
   }
 
+  // --- Battle Arena Viewport (No Right-Side Chat Log) ---
+
   renderBattleArena(appEl) {
     if (!this.engine) return;
 
@@ -161,7 +195,7 @@ export class GameApp {
 
     appEl.innerHTML = `
       <div class="battle-arena">
-        <!-- Left Sidebar: Shopkeeper Info & Deck Status -->
+        <!-- Left Sidebar: Shopkeeper & Tactical Controls -->
         <div class="sidebar-panel">
           <div class="shopkeeper-card">
             <div class="shopkeeper-portrait">${this.engine.player.emoji}</div>
@@ -175,26 +209,26 @@ export class GameApp {
             </div>
 
             <!-- Energy Bar -->
-            <div class="meter-bar" style="margin-top: 6px;">
+            <div class="meter-bar">
               <div class="meter-fill-energy" style="width: ${(this.engine.player.energy / this.engine.player.maxEnergy) * 100}%"></div>
               <span class="meter-label">Energy: ${this.engine.player.energy} / ${this.engine.player.maxEnergy}</span>
             </div>
 
             <!-- Kassa Meter -->
-            <div class="meter-bar" style="margin-top: 6px;">
+            <div class="meter-bar">
               <div class="meter-fill-kassa" style="width: ${(this.engine.player.kassa / this.engine.player.kassaMax) * 100}%"></div>
               <span class="meter-label">Kassa: ${this.engine.player.kassa} / ${this.engine.player.kassaMax}</span>
             </div>
 
-            <div style="margin-top: 6px; font-weight: bold; font-size: 0.85rem; color: #E65100;">
+            <div style="margin-top: 6px; font-weight: 900; font-size: 0.9rem; color: #E65100;">
               🪙 Coins: ${this.engine.playerCoins}
             </div>
           </div>
 
-          <!-- Unit Selling Inspection Box -->
+          <!-- Unit Selling Tray -->
           ${selectedUnitOnBoard ? `
             <div class="sell-action-box">
-              <div style="font-weight: bold; font-size: 0.85rem;">📦 Select Stock: ${selectedUnitOnBoard.name}</div>
+              <div style="font-weight: 900; font-size: 0.85rem;">📦 Selected: ${selectedUnitOnBoard.name}</div>
               <div style="font-size: 0.75rem; color: #555;">Value: 🪙 ${selectedUnitOnBoard.saleValue} Coins</div>
               <button class="btn btn-sm btn-primary" style="margin-top: 6px; width: 100%;"
                 ${!isPlanning || this.engine.salesThisRound.player >= this.engine.maxSalesPerRound ? 'disabled' : ''}
@@ -203,52 +237,67 @@ export class GameApp {
               </button>
             </div>
           ` : `
-            <div style="font-size: 0.75rem; color: #888; text-align: center; border: 1px dashed #D7CCC8; padding: 6px; border-radius: 6px;">
-              Click any friendly unit to inspect / sell stock (1 sale/round limit).
+            <div style="font-size: 0.72rem; color: #777; text-align: center; border: 2px dashed #B8A88A; padding: 6px; border-radius: 8px;">
+              Click any friendly item to inspect & sell stock (max 1/round).
             </div>
           `}
 
-          <!-- Shopkeeper Abilities -->
+          <!-- Abilities -->
           <div class="abilities-list">
-            <h4 style="font-size: 0.82rem; color: var(--wood-med);">ABILITIES</h4>
+            <h4 style="font-size: 0.82rem; color: var(--wood-med); font-weight: 800;">TACTICAL ABILITIES</h4>
             ${this.engine.player.abilities.map(ab => `
               <button class="ability-btn" 
                 ${this.engine.player.energy < ab.cost || !isPlanning ? 'disabled' : ''}
                 onclick="window.app.onAbilityClicked('${ab.id}')">
-                <strong>${ab.emoji} ${ab.name}</strong> (${ab.cost} Energy)<br/>
-                <span style="font-size: 0.7rem; color: #555;">${ab.description}</span>
+                <strong>${ab.emoji} ${ab.name}</strong> (${ab.cost} ⚡)<br/>
+                <span style="font-size: 0.68rem; color: #555;">${ab.description}</span>
               </button>
             `).join('')}
 
-            <!-- Signature Ability -->
             <button class="ability-btn signature-btn"
               ${this.engine.player.kassa < this.engine.player.kassaMax || !isPlanning ? 'disabled' : ''}
               onclick="window.app.onSignatureClicked()">
               <strong>${this.engine.player.signature.emoji} ${this.engine.player.signature.name}</strong> (Full Kassa)<br/>
-              <span style="font-size: 0.7rem; color: #555;">${this.engine.player.signature.description}</span>
+              <span style="font-size: 0.68rem; color: #555;">${this.engine.player.signature.description}</span>
             </button>
           </div>
 
-          <!-- Deck / Discard Status -->
+          <!-- Deck / Discard Status & Speed Toggle -->
           <div class="piles-status">
             <div>🎴 Draw: <strong>${this.engine.player.deckManager.drawPile.length}</strong></div>
             <div>🗑️ Discard: <strong>${this.engine.player.deckManager.discardPile.length}</strong></div>
           </div>
-          <button class="btn btn-sm" onclick="window.app.showScreen('main_menu')">🏳️ Surrender / Menu</button>
+
+          <div style="display: flex; justify-content: space-between; gap: 6px;">
+            <button class="btn btn-sm" onclick="window.app.toggleFastCombat()">
+              ⚡ Fast: ${animManager.isFastCombat ? 'ON' : 'OFF'}
+            </button>
+            <button class="btn btn-sm" onclick="window.app.showScreen('main_menu')">🏳️ Menu</button>
+          </div>
         </div>
 
-        <!-- Center Battlefield (5 Lanes) -->
+        <!-- Center Stage: The 5 Combat Lanes & Arched Fanned Hand -->
         <div class="battlefield-container">
           <!-- Opponent Counter Status -->
           <div class="enemy-area">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 2rem;">${this.engine.enemy.emoji}</span>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 2.4rem;">${this.engine.enemy.emoji}</span>
               <div>
-                <strong>${this.engine.enemy.name}</strong>
-                <div style="font-size: 0.8rem; color: #666;">${this.engine.enemy.title}</div>
+                <strong style="font-size: 1.1rem;">${this.engine.enemy.name}</strong>
+                <div style="font-size: 0.78rem; color: #666; font-weight: 600;">${this.engine.enemy.title}</div>
               </div>
             </div>
-            <div style="width: 200px;">
+
+            <!-- Relics Display Banner -->
+            <div style="display: flex; gap: 6px;">
+              ${this.engine.relics.map(r => `
+                <div style="background: #FFF; border: 1px solid var(--amber-gold); border-radius: 6px; padding: 2px 6px; font-size: 0.75rem;" title="${r.description}">
+                  ${r.emoji} ${r.name}
+                </div>
+              `).join('')}
+            </div>
+
+            <div style="width: 220px;">
               <div class="meter-bar">
                 <div class="meter-fill-hp" style="width: ${(this.engine.enemy.health / this.engine.enemy.maxHealth) * 100}%"></div>
                 <span class="meter-label">HP: ${this.engine.enemy.health} / ${this.engine.enemy.maxHealth}</span>
@@ -256,9 +305,9 @@ export class GameApp {
             </div>
           </div>
 
-          <!-- The 5 Combat Lanes -->
+          <!-- The 5 Combat Lanes Board -->
           <div class="lanes-board">
-            <div class="lanes-row">
+            <div class="lanes-row enemy-row">
               ${this.renderLanes(this.engine.enemyLanes, false)}
             </div>
 
@@ -266,17 +315,17 @@ export class GameApp {
               ⚔️ 5-LANE CLASH COUNTER ⚔️
             </div>
 
-            <div class="lanes-row">
+            <div class="lanes-row player-row">
               ${this.renderLanes(this.engine.playerLanes, true)}
             </div>
           </div>
 
-          <!-- Player Controls: Hand & Bell Action Bar -->
+          <!-- Player Controls: Action Bar & Arched Fanned-Out Hand -->
           <div class="player-controls">
             <div class="action-bar">
               <div>
-                <span style="font-weight: bold; font-size: 1rem;">Phase: ${this.engine.phase}</span>
-                <span style="margin-left: 12px; color: var(--wood-med);">Round: ${this.engine.roundNumber}</span>
+                <span style="font-weight: 900; font-size: 1.05rem;">Phase: ${this.engine.phase.replace('_', ' ')}</span>
+                <span style="margin-left: 12px; color: var(--wood-med); font-weight: 800;">Round ${this.engine.roundNumber}</span>
               </div>
               <button class="btn-open-shop" 
                 ${!isPlanning ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}
@@ -285,28 +334,10 @@ export class GameApp {
               </button>
             </div>
 
+            <!-- Arched Fanned Hand Container -->
             <div class="hand-container">
-              ${this.renderHandCards()}
+              ${this.renderArchedHandCards()}
             </div>
-          </div>
-        </div>
-
-        <!-- Right Sidebar: Log & Relics -->
-        <div class="sidebar-panel log-panel">
-          <h4 style="font-size: 0.85rem; color: var(--wood-med);">ACTIVE RELICS</h4>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            ${this.engine.relics.map(r => `
-              <div style="background: #FFF; border: 1px solid var(--amber-gold); border-radius: 6px; padding: 4px 8px; font-size: 0.8rem;" title="${r.description}">
-                ${r.emoji} ${r.name}
-              </div>
-            `).join('')}
-          </div>
-
-          <h4 style="font-size: 0.85rem; color: var(--wood-med); margin-top: 8px;">SHOP COMBAT LOG</h4>
-          <div class="event-log-box" id="event-log-box">
-            ${this.engine.eventLogs.slice(-25).reverse().map(msg => `
-              <div class="log-entry">${msg}</div>
-            `).join('')}
           </div>
         </div>
       </div>
@@ -323,27 +354,30 @@ export class GameApp {
         return `
           <div class="lane-slot locked">
             <span class="lane-badge">LANE ${idx + 1}</span>
-            <div style="font-size: 1.8rem;">🚫</div>
-            <div style="font-size: 0.7rem; font-weight: bold; color: var(--danger-red);">CONDEMNED</div>
+            <div style="font-size: 2rem;">🚫</div>
+            <div style="font-size: 0.72rem; font-weight: 900; color: var(--danger-red);">CONDEMNED</div>
           </div>
         `;
       }
 
       if (unit) {
         const extraClass = unit.keywords.includes("taunt") ? "taunt" : (unit.hasSwift ? "swift" : "");
+        const factionClass = unit.faction === "cozy_counter" ? "faction-cozy" : "faction-midnight";
+        const idleAnimClass = unit.tags.includes("light") ? "idle-candle" : (unit.tags.includes("furniture") ? "idle-wobble" : "");
+
         return `
           <div class="lane-slot ${isLaneSelected ? 'selected-lane' : ''}" onclick="window.app.onLaneSlotClicked(${idx}, ${isPlayer})">
             <span class="lane-badge">LANE ${idx + 1}</span>
-            <div class="card-unit ${extraClass}">
+            <div class="card-unit ${extraClass} ${factionClass}">
               <div class="card-header">
-                <span class="card-cost">${unit.cost}</span>
-                <span style="font-size: 0.65rem; text-transform: uppercase;">${unit.tags[0] || 'Item'}</span>
+                <span class="card-cost-gem">${unit.cost}</span>
+                <span class="rarity-jewel jewel-${unit.rarity}"></span>
               </div>
-              <div class="card-emoji">${unit.emoji}</div>
+              <div class="unit-emoji-container ${idleAnimClass}">${unit.emoji}</div>
               <div class="card-name">${unit.name}</div>
               <div class="card-stats">
-                <span class="stat-atk">⚔️ ${unit.attack + (unit.tempAttackBonus || 0)}</span>
-                <span class="stat-hp">❤️ ${unit.health}</span>
+                <span class="stat-badge-atk">${unit.attack + (unit.tempAttackBonus || 0)}</span>
+                <span class="stat-badge-hp">${unit.health}</span>
               </div>
             </div>
           </div>
@@ -353,50 +387,51 @@ export class GameApp {
       return `
         <div class="lane-slot ${isSelectable ? 'selectable' : ''}" onclick="window.app.onLaneSlotClicked(${idx}, ${isPlayer})">
           <span class="lane-badge">LANE ${idx + 1}</span>
-          <span style="font-size: 0.75rem; color: #9E9E9E;">${isSelectable ? 'Click to Place' : 'Empty'}</span>
+          <span style="font-size: 0.78rem; font-weight: 700; color: #8D6E63;">${isSelectable ? 'Click to Place' : 'Empty'}</span>
         </div>
       `;
     }).join('');
   }
 
-  renderHandCards() {
+  // --- Arched Fanned-Out Hand Rendering ---
+
+  renderArchedHandCards() {
     const hand = this.engine.player.deckManager.hand;
-    if (hand.length === 0) {
-      return `<div style="padding: 16px; color: #757575;">No cards in hand.</div>`;
+    const total = hand.length;
+    if (total === 0) {
+      return `<div style="padding: 16px; color: #FFF; font-weight: bold; text-shadow: 1px 1px 0 #000;">Hand empty. Next round draws fresh stock!</div>`;
     }
 
-    return hand.map(card => {
+    return hand.map((card, i) => {
       const isSelected = this.selectedHandCard && this.selectedHandCard.instanceId === card.instanceId;
       const canAfford = this.engine.player.energy >= card.cost;
+      const factionClass = card.faction === "cozy_counter" ? "faction-cozy" : "faction-midnight";
+
+      // Calculate gentle arc rotation and vertical offset
+      const centerOffset = i - (total - 1) / 2;
+      const rotationDeg = centerOffset * 4.5;
+      const translateYPx = Math.abs(centerOffset) * 6;
+
       return `
-        <div class="hand-card ${isSelected ? 'selected' : ''}" 
-          style="${!canAfford ? 'opacity: 0.6;' : ''}"
+        <div class="hand-card ${isSelected ? 'selected' : ''} ${canAfford ? 'playable' : 'unplayable'} ${factionClass}" 
+          style="transform: rotate(${rotationDeg}deg) translateY(${translateYPx}px); z-index: ${i + 1};"
           onclick="window.app.onHandCardClicked('${card.instanceId}')">
           <div class="card-header">
-            <span class="card-cost">${card.cost}</span>
-            <span style="font-size: 0.65rem; color: #666;">${card.type}</span>
+            <span class="card-cost-gem">${card.cost}</span>
+            <span class="rarity-jewel jewel-${card.rarity}"></span>
           </div>
-          <div class="card-emoji">${card.emoji}</div>
+          <div class="card-emoji" style="font-size: 2.2rem; text-align: center;">${card.emoji}</div>
           <div class="card-name">${card.name}</div>
           <div class="card-desc">${card.description}</div>
           ${card.type === 'item' ? `
-            <div class="card-stats">
-              <span class="stat-atk">⚔️ ${card.attack}</span>
-              <span class="stat-hp">❤️ ${card.health}</span>
+            <div class="card-stats" style="margin-top: 4px;">
+              <span class="stat-badge-atk">${card.attack}</span>
+              <span class="stat-badge-hp">${card.health}</span>
             </div>
-          ` : '<div style="height: 14px;"></div>'}
+          ` : '<div style="height: 18px;"></div>'}
         </div>
       `;
     }).join('');
-  }
-
-  updateLogBox() {
-    const box = document.getElementById("event-log-box");
-    if (box) {
-      box.innerHTML = this.engine.eventLogs.slice(-25).reverse().map(msg => `
-        <div class="log-entry">${msg}</div>
-      `).join('');
-    }
   }
 
   // --- User Interactions ---
@@ -431,7 +466,8 @@ export class GameApp {
       if (this.selectedHandCard.type === "item") {
         const success = this.engine.playCard(true, this.selectedHandCard.instanceId, laneIndex);
         if (success) {
-          soundFx.playWoodClunk();
+          const slot = document.querySelector(`.player-row .lane-slot:nth-child(${laneIndex + 1})`);
+          animManager.playSummonLanding(slot);
           this.selectedHandCard = null;
         }
       } else if (this.selectedHandCard.type === "upgrade") {
@@ -486,11 +522,18 @@ export class GameApp {
   onSignatureClicked() {
     this.engine.useSignatureAbility(true);
     soundFx.playCounterBell();
+    animManager.shakeScreen("heavy");
     this.render();
   }
 
   async onOpenTheShopClicked() {
     await this.engine.openTheShop();
+  }
+
+  toggleFastCombat() {
+    animManager.setFastCombat(!animManager.isFastCombat);
+    soundFx.playCardFlip();
+    this.render();
   }
 
   showCollectionModal() {
@@ -499,29 +542,29 @@ export class GameApp {
     modalEl.id = "collection-modal";
     modalEl.innerHTML = `
       <div class="modal-content">
-        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--wood-light); padding-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid var(--wood-med); padding-bottom: 8px;">
           <h2>📚 Master Collection (30 / 120+ Initial Catalog)</h2>
-          <button class="btn" onclick="document.getElementById('collection-modal').remove()">Close ✖</button>
+          <button class="btn btn-sm" onclick="document.getElementById('collection-modal').remove()">✖</button>
         </div>
         <p style="margin-top: 8px; color: var(--wood-med); font-size: 0.9rem;">
           Explore all permanent cards from <strong>The Cozy Counter</strong> and <strong>The Midnight Bazaar</strong>.
         </p>
         <div class="collection-grid">
           ${this.allCards.map(c => `
-            <div class="hand-card" style="width: 100%; height: 160px; cursor: default;">
+            <div class="hand-card ${c.faction === 'cozy_counter' ? 'faction-cozy' : 'faction-midnight'}" style="width: 100%; height: 165px; cursor: default; transform: none !important;">
               <div class="card-header">
-                <span class="card-cost">${c.cost}</span>
-                <span style="font-size: 0.65rem; color: #888;">${c.faction.replace('_', ' ')}</span>
+                <span class="card-cost-gem">${c.cost}</span>
+                <span class="rarity-jewel jewel-${c.rarity}"></span>
               </div>
-              <div class="card-emoji">${c.emoji}</div>
+              <div class="card-emoji" style="font-size: 2.2rem; text-align: center;">${c.emoji}</div>
               <div class="card-name">${c.name}</div>
               <div class="card-desc">${c.description}</div>
               ${c.type === 'item' ? `
-                <div class="card-stats">
-                  <span class="stat-atk">⚔️ ${c.attack}</span>
-                  <span class="stat-hp">❤️ ${c.health}</span>
+                <div class="card-stats" style="margin-top: 4px;">
+                  <span class="stat-badge-atk">${c.attack}</span>
+                  <span class="stat-badge-hp">${c.health}</span>
                 </div>
-              ` : '<div style="height: 14px;"></div>'}
+              ` : '<div style="height: 18px;"></div>'}
             </div>
           `).join('')}
         </div>
@@ -531,7 +574,7 @@ export class GameApp {
   }
 
   showSettingsModal() {
-    alert("Audio Settings:\n• Web Audio Sound Effects: Enabled (100%)\n• Master Volume: 100%\n• Reduced Motion: Off\n• Save Version: 2.0 (Local)");
+    alert("Audio Settings:\n• Web Audio Sound Effects: Enabled (100%)\n• Master Volume: 100%\n• Fast Combat: " + (animManager.isFastCombat ? 'ON' : 'OFF') + "\n• Save Version: 2.0 (Local)");
   }
 
   showBattleEndModal(winner) {
@@ -541,13 +584,13 @@ export class GameApp {
     const isWin = winner === "player";
 
     modalEl.innerHTML = `
-      <div class="modal-content" style="max-width: 500px; text-align: center;">
-        <div style="font-size: 3.5rem; margin-bottom: 8px;">${isWin ? '🏆' : '💀'}</div>
-        <h2>${isWin ? 'Shop Victorious!' : 'Shop Overrun!'}</h2>
-        <p style="margin: 12px 0; color: #555;">
-          ${isWin ? 'Your living merchandise stood ground and protected the counter! Awarded +50 Coins 🪙!' : 'The dispute overwhelmed your stock. Tidy up the counter and try again!'}
+      <div class="modal-content" style="max-width: 520px; text-align: center;">
+        <div style="font-size: 4rem; margin-bottom: 8px;">${isWin ? '🏆' : '💀'}</div>
+        <h2 style="font-size: 1.8rem; font-weight: 900;">${isWin ? 'Shop Victorious!' : 'Shop Overrun!'}</h2>
+        <p style="margin: 14px 0; color: #555; font-size: 0.95rem;">
+          ${isWin ? 'Your living stock stood ground and protected the counter! Awarded +50 Coins 🪙!' : 'The dispute overwhelmed your stock. Tidy up the counter and try again!'}
         </p>
-        <button class="btn btn-primary" style="font-size: 1.1rem; padding: 10px 24px;"
+        <button class="btn btn-primary" style="font-size: 1.15rem; padding: 12px 30px;"
           onclick="document.getElementById('battle-end-modal').remove(); window.app.showScreen('main_menu');">
           Return to Shop Hub ➔
         </button>

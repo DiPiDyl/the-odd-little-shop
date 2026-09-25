@@ -1,4 +1,4 @@
-// Cozy Web Audio API Sound Synthesizer (Zero External Audio Files - Expanded)
+// Cozy Web Audio API Sound Synthesizer (Comprehensive Game Audio)
 class CozyAudioSynthesizer {
   constructor() {
     this.ctx = null;
@@ -35,7 +35,7 @@ class CozyAudioSynthesizer {
     filter.frequency.setValueAtTime(1760, this.ctx.currentTime);
     filter.Q.setValueAtTime(8, this.ctx.currentTime);
 
-    gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+    gain.gain.setValueAtTime(0.28, this.ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 1.4);
 
     osc.connect(filter);
@@ -72,8 +72,83 @@ class CozyAudioSynthesizer {
     });
   }
 
-  // Coin clink
-  playCoinClink() {
+  // Coin shower (multiple light coin jingles)
+  playCoinShower() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+
+    for (let i = 0; i < 4; i++) {
+      const t = this.ctx.currentTime + i * 0.05;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(2200 + Math.random() * 400, t);
+      gain.gain.setValueAtTime(0.12, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.12);
+    }
+  }
+
+  // Heavy Melee Attack (Thumping wooden punch)
+  playHeavyAttack() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(180, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(45, this.ctx.currentTime + 0.16);
+
+    gain.gain.setValueAtTime(0.35, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.16);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.16);
+  }
+
+  // Swift Attack (Crisp whooshing blade/broom slash)
+  playSwiftAttack() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const bufferSize = this.ctx.sampleRate * 0.12;
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(3200, this.ctx.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.12);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    noise.start();
+    noise.stop(this.ctx.currentTime + 0.12);
+  }
+
+  // Magic Cast (Whimsical resonant frequency)
+  playMagicCast() {
     if (!this.enabled) return;
     this.init();
     if (!this.ctx) return;
@@ -82,17 +157,66 @@ class CozyAudioSynthesizer {
     const gain = this.ctx.createGain();
 
     osc.type = "sine";
-    osc.frequency.setValueAtTime(2489, this.ctx.currentTime); // D#7
-    osc.frequency.exponentialRampToValueAtTime(1864, this.ctx.currentTime + 0.15);
+    osc.frequency.setValueAtTime(650, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1400, this.ctx.currentTime + 0.22);
 
     gain.gain.setValueAtTime(0.18, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.22);
 
     osc.connect(gain);
     gain.connect(this.ctx.destination);
 
     osc.start();
-    osc.stop(this.ctx.currentTime + 0.15);
+    osc.stop(this.ctx.currentTime + 0.22);
+  }
+
+  // Hit Impact (Crunchy impact)
+  playHitImpact() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(35, this.ctx.currentTime + 0.18);
+
+    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.18);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.18);
+  }
+
+  // Legendary Reveal Fanfare
+  playLegendaryStinger() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const notes = [440, 554.37, 659.25, 880, 1108.73]; // A major triumphant chord
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const t = this.ctx.currentTime + idx * 0.07;
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, t);
+
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(t);
+      osc.stop(t + 0.8);
+    });
   }
 
   // Pack rip / unwrapping swoosh
@@ -101,34 +225,31 @@ class CozyAudioSynthesizer {
     this.init();
     if (!this.ctx) return;
 
-    const bufferSize = this.ctx.sampleRate * 0.3;
+    const bufferSize = this.ctx.sampleRate * 0.35;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const output = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      output[i] = Math.random() * 2 - 1;
-    }
+    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
 
     const noise = this.ctx.createBufferSource();
     noise.buffer = buffer;
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = "bandpass";
-    filter.frequency.setValueAtTime(1400, this.ctx.currentTime);
-    filter.frequency.exponentialRampToValueAtTime(300, this.ctx.currentTime + 0.3);
+    filter.frequency.setValueAtTime(1800, this.ctx.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(400, this.ctx.currentTime + 0.35);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.22, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.3);
+    gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.35);
 
     noise.connect(filter);
     filter.connect(gain);
     gain.connect(this.ctx.destination);
 
     noise.start();
-    noise.stop(this.ctx.currentTime + 0.3);
+    noise.stop(this.ctx.currentTime + 0.35);
   }
 
-  // Card flip snap
   playCardFlip() {
     if (!this.enabled) return;
     this.init();
@@ -138,8 +259,8 @@ class CozyAudioSynthesizer {
     const gain = this.ctx.createGain();
 
     osc.type = "triangle";
-    osc.frequency.setValueAtTime(450, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(180, this.ctx.currentTime + 0.08);
+    osc.frequency.setValueAtTime(480, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.08);
 
     gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08);
@@ -151,7 +272,6 @@ class CozyAudioSynthesizer {
     osc.stop(this.ctx.currentTime + 0.08);
   }
 
-  // Wooden clunk when an item is placed in a lane
   playWoodClunk() {
     if (!this.enabled) return;
     this.init();
@@ -174,7 +294,6 @@ class CozyAudioSynthesizer {
     osc.stop(this.ctx.currentTime + 0.12);
   }
 
-  // Card draw whoosh
   playCardSwoosh() {
     if (!this.enabled) return;
     this.init();
@@ -183,9 +302,7 @@ class CozyAudioSynthesizer {
     const bufferSize = this.ctx.sampleRate * 0.15;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const output = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      output[i] = Math.random() * 2 - 1;
-    }
+    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
 
     const whiteNoise = this.ctx.createBufferSource();
     whiteNoise.buffer = buffer;
@@ -208,7 +325,6 @@ class CozyAudioSynthesizer {
     whiteNoise.stop(this.ctx.currentTime + 0.15);
   }
 
-  // Gentle heal / Warmth chime
   playHealChime() {
     if (!this.enabled) return;
     this.init();
@@ -234,8 +350,7 @@ class CozyAudioSynthesizer {
     });
   }
 
-  // Combat clash impact
-  playDamageImpact() {
+  playCoinClink() {
     if (!this.enabled) return;
     this.init();
     if (!this.ctx) return;
@@ -243,11 +358,11 @@ class CozyAudioSynthesizer {
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
 
-    osc.type = "sawtooth";
-    osc.frequency.setValueAtTime(140, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.15);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(2489, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1864, this.ctx.currentTime + 0.15);
 
-    gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+    gain.gain.setValueAtTime(0.18, this.ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15);
 
     osc.connect(gain);
