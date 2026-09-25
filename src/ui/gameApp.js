@@ -1,24 +1,24 @@
 // The Odd Little Shop — Master Application Controller & Router (Hearthstone-Level Visual Polish)
-import { CombatEngine, CombatPhase } from "../engine/combatEngine.js";
-import { AIOpponent } from "../engine/aiOpponent.js";
-import { createCardInstance } from "../engine/cardModel.js";
-import { COZY_COUNTER_CARDS } from "../data/cardsCozyCounter.js";
-import { MIDNIGHT_BAZAAR_CARDS } from "../data/cardsMidnightBazaar.js";
-import { ENEMY_ENCOUNTERS } from "../data/enemies.js";
-import { RELICS } from "../data/relics.js";
-import { soundFx } from "../audio/soundEffects.js";
-import { SaveManager } from "../save/saveManager.js";
-import { animManager } from "./animationManager.js";
+import { CombatEngine, CombatPhase } from "../engine/combatEngine.js?v=2.5.3";
+import { AIOpponent } from "../engine/aiOpponent.js?v=2.5.3";
+import { createCardInstance } from "../engine/cardModel.js?v=2.5.3";
+import { COZY_COUNTER_CARDS } from "../data/cardsCozyCounter.js?v=2.5.3";
+import { MIDNIGHT_BAZAAR_CARDS } from "../data/cardsMidnightBazaar.js?v=2.5.3";
+import { ENEMY_ENCOUNTERS } from "../data/enemies.js?v=2.5.3";
+import { RELICS } from "../data/relics.js?v=2.5.3";
+import { soundFx } from "../audio/soundEffects.js?v=2.5.3";
+import { SaveManager } from "../save/saveManager.js?v=2.5.3";
+import { animManager } from "./animationManager.js?v=2.5.3";
 
-import { MainMenuScreen } from "./mainMenuScreen.js";
-import { DeckbuilderScreen } from "./deckbuilderScreen.js";
-import { PackOpeningScreen } from "./packOpeningScreen.js";
-import { PawnShopModal } from "./pawnShopModal.js";
-import { CardLabScreen } from "./cardLabScreen.js";
-import { CollectionScreen } from "./collectionScreen.js";
-import { ProfileScreen } from "./profileScreen.js";
-import { SettingsModal } from "./settingsModal.js";
-import { TutorialModal } from "./tutorialModal.js";
+import { MainMenuScreen } from "./mainMenuScreen.js?v=2.5.3";
+import { DeckbuilderScreen } from "./deckbuilderScreen.js?v=2.5.3";
+import { PackOpeningScreen } from "./packOpeningScreen.js?v=2.5.3";
+import { PawnShopModal } from "./pawnShopModal.js?v=2.5.3";
+import { CardLabScreen } from "./cardLabScreen.js?v=2.5.3";
+import { CollectionScreen } from "./collectionScreen.js?v=2.5.3";
+import { ProfileScreen } from "./profileScreen.js?v=2.5.3";
+import { SettingsModal } from "./settingsModal.js?v=2.5.3";
+import { TutorialModal } from "./tutorialModal.js?v=2.5.3";
 
 export class GameApp {
   constructor() {
