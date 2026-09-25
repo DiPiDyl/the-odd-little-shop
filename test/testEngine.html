@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>The Odd Little Shop — Automated Engine Tests</title>
+</head>
+<body>
+  <h1>Engine Verification Results</h1>
+  <div id="results">Running tests...</div>
+
+  <script type="module">
+    import { DeckManager } from "../src/engine/deckManager.js";
+    import { CombatEngine, CombatPhase } from "../src/engine/combatEngine.js";
+    import { createCardInstance } from "../src/engine/cardModel.js";
+    import { COZY_COUNTER_CARDS } from "../src/data/cardsCozyCounter.js";
+    import { MIDNIGHT_BAZAAR_CARDS } from "../src/data/cardsMidnightBazaar.js";
+    import { SHOPKEEPERS } from "../src/data/shopkeepers.js";
+
+    const resultsDiv = document.getElementById("results");
+    const logs = [];
+
+    function assert(condition, message) {
+      if (!condition) {
+        throw new Error("FAILED: " + message);
+      }
+      logs.push("✅ PASS: " + message);
+    }
+
+    try {
+      // Test 1: Continuous Deck Loop Reshuffle
+      const cards = [
+        createCardInstance(COZY_COUNTER_CARDS[0]),
+        createCardInstance(COZY_COUNTER_CARDS[1]),
+        createCardInstance(COZY_COUNTER_CARDS[2])
+      ];
+      const dm = new DeckManager(cards);
+      assert(dm.drawPile.length === 3, "Initial draw pile has 3 cards");
+      
+      // Draw 2
+      const drawn1 = dm.drawCards(2);
+      assert(drawn1.length === 2, "Drew 2 cards into hand");
+      assert(dm.hand.length === 2, "Hand has 2 cards");
+      assert(dm.drawPile.length === 1, "Draw pile has 1 card left");
+
+      // Discard 1
+      const discarded = dm.discardCardFromHand(drawn1[0].instanceId);
+      assert(discarded !== null, "Discarded 1 card to discard pile");
+      assert(dm.discardPile.length === 1, "Discard pile has 1 card");
+
+      // Now draw 2 cards: Draw pile only has 1, so it should draw 1, trigger reshuffle of the 1 discard, and draw it!
+      let reshuffled = false;
+      const drawn2 = dm.drawCards(2, () => { reshuffled = true; });
+      assert(reshuffled === true, "Continuous Deck Loop auto-reshuffled discard pile!");
+      assert(drawn2.length === 2, "Drew both remaining cards seamlessly without running dry");
+
+      // Test 2: Combat Engine Initialization & 5-Lane Board
+      const engine = new CombatEngine({
+        playerShopkeeperId: "cozy_curator",
+        enemyShopkeeperId: "midnight_broker",
+        playerDeckInstances: COZY_COUNTER_CARDS.map(c => createCardInstance(c)),
+        enemyDeckInstances: MIDNIGHT_BAZAAR_CARDS.map(c => createCardInstance(c))
+      });
+
+      engine.startBattle();
+      assert(engine.playerLanes.length === 5, "Player has 5 combat lanes");
+      assert(engine.enemyLanes.length === 5, "Enemy has 5 combat lanes");
+      assert(engine.phase === CombatPhase.PLANNING, "Engine enters PLANNING phase after draw");
+      assert(engine.player.energy >= 3, "Player starts with base Energy");
+
+      // Test 3: Card Placement on Lane
+      const armchairData = COZY_COUNTER_CARDS.find(c => c.id === "cozy_armchair");
+      const armchair = createCardInstance(armchairData);
+      engine.player.deckManager.hand.push(armchair);
+      engine.player.energy = 5;
+
+      const playSuccess = engine.playCard(true, armchair.instanceId, 0); // Place in Lane 1 (index 0)
+      assert(playSuccess === true, "Placed Old Armchair in Lane 1");
+      assert(engine.playerLanes[0].id === "cozy_armchair", "Lane 1 correctly contains Old Armchair");
+      assert(engine.playerLanes[0].keywords.includes("taunt"), "Old Armchair has Taunt keyword");
+
+      // Test 4: Open The Shop & Deterministic Resolution
+      const initialEnemyHp = engine.enemy.health;
+      engine.openTheShop();
+      assert(engine.phase === CombatPhase.RESOLUTION, "Phase shifted to RESOLUTION");
+      // Since Lane 1 enemy is empty, Armchair attacks enemy Shopkeeper directly for 1 damage
+      assert(engine.enemy.health === initialEnemyHp - 1, "Uncontested Lane 1 dealt 1 damage directly to Enemy Shopkeeper");
+
+      logs.push("🎉 ALL AUTOMATED ENGINE TESTS PASSED SUCCESSFULLY!");
+      resultsDiv.innerHTML = logs.map(l => `<p>${l}</p>`).join("");
+      document.title = "TESTS_PASSED";
+    } catch (err) {
+      logs.push("❌ " + err.message);
+      resultsDiv.innerHTML = logs.map(l => `<p style="color:red;">${l}</p>`).join("");
+      document.title = "TESTS_FAILED";
+    }
+  </script>
+</body>
+</html>

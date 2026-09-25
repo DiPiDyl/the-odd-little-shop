@@ -1,0 +1,612 @@
+// Core 5-Lane Deterministic Combat Engine & State Machine
+import { DeckManager } from "./deckManager.js";
+import { createCardInstance } from "./cardModel.js";
+import { SHOPKEEPERS } from "../data/shopkeepers.js";
+
+export const CombatPhase = {
+  ROUND_START: "ROUND_START",
+  DRAW: "DRAW",
+  PLANNING: "PLANNING",
+  OPEN_SHOP: "OPEN_SHOP",
+  RESOLUTION: "RESOLUTION",
+  ROUND_END: "ROUND_END",
+  BATTLE_OVER: "BATTLE_OVER"
+};
+
+export class CombatEngine {
+  constructor(config = {}) {
+    this.roundNumber = 0;
+    this.phase = CombatPhase.ROUND_START;
+    this.eventLogs = [];
+    this.listeners = [];
+
+    // 5 Lanes: index 0 to 4
+    this.playerLanes = [null, null, null, null, null];
+    this.enemyLanes = [null, null, null, null, null];
+    this.lockedPlayerLanes = [false, false, false, false, false];
+
+    // Player State
+    const playerShopkeeperData = SHOPKEEPERS[config.playerShopkeeperId || "cozy_curator"];
+    this.player = {
+      name: playerShopkeeperData.name,
+      title: playerShopkeeperData.title,
+      emoji: playerShopkeeperData.emoji,
+      faction: playerShopkeeperData.faction,
+      health: playerShopkeeperData.maxHealth,
+      maxHealth: playerShopkeeperData.maxHealth,
+      energy: 0,
+      maxEnergy: 3,
+      kassa: 0,
+      kassaMax: playerShopkeeperData.kassaMax,
+      warmth: 0,
+      abilities: playerShopkeeperData.abilities,
+      signature: playerShopkeeperData.signature,
+      deckManager: new DeckManager(config.playerDeckInstances || []),
+      isShopkeeper: true
+    };
+
+    // Enemy State
+    const enemyShopkeeperData = SHOPKEEPERS[config.enemyShopkeeperId || "midnight_broker"];
+    this.enemy = {
+      name: config.enemyName || enemyShopkeeperData.name,
+      title: config.enemyTitle || enemyShopkeeperData.title,
+      emoji: config.enemyEmoji || enemyShopkeeperData.emoji,
+      faction: enemyShopkeeperData.faction,
+      health: config.enemyHealth || enemyShopkeeperData.maxHealth,
+      maxHealth: config.enemyHealth || enemyShopkeeperData.maxHealth,
+      energy: 0,
+      maxEnergy: 3,
+      kassa: 0,
+      kassaMax: enemyShopkeeperData.kassaMax,
+      warmth: 0,
+      abilities: enemyShopkeeperData.abilities,
+      signature: enemyShopkeeperData.signature,
+      deckManager: new DeckManager(config.enemyDeckInstances || []),
+      specialMechanic: config.specialMechanic || null,
+      isShopkeeper: true
+    };
+
+    this.roundEndDamageQueue = { player: 0, enemy: 0 };
+    this.destroyedThisRound = { player: [], enemy: [] };
+    this.relics = config.relics || [];
+    this.relicState = {};
+    this.winner = null;
+  }
+
+  subscribe(listener) {
+    this.listeners.push(listener);
+  }
+
+  notify(eventType, data = {}) {
+    this.listeners.forEach(fn => fn(eventType, data, this));
+  }
+
+  log(message) {
+    this.eventLogs.push(message);
+    this.notify("log", { message });
+  }
+
+  // --- Round Flow & Lifecycle ---
+
+  startBattle() {
+    this.log(`🏪 Welcome to The Odd Little Shop! Battle commences between ${this.player.name} and ${this.enemy.name}!`);
+    this.roundNumber = 0;
+    this.startNextRound();
+  }
+
+  startNextRound() {
+    if (this.winner) return;
+
+    this.roundNumber += 1;
+    this.phase = CombatPhase.ROUND_START;
+    this.destroyedThisRound = { player: [], enemy: [] };
+
+    // Calculate base Energy: Round 1: 3, Round 2: 4, Round 3+: 5
+    const baseEnergy = Math.min(5, 2 + this.roundNumber);
+    this.player.maxEnergy = baseEnergy;
+    this.player.energy = baseEnergy;
+    this.enemy.maxEnergy = baseEnergy;
+    this.enemy.energy = baseEnergy;
+
+    // Reset lane locks from boss
+    this.lockedPlayerLanes = [false, false, false, false, false];
+
+    // Relic hooks
+    this.relics.forEach(r => {
+      if (r.onRoundStart) r.onRoundStart(this.relicState);
+    });
+
+    // Special Boss Mechanic: Inspector Grimshaw Code Violation
+    if (this.enemy.specialMechanic === "code_violation" && this.roundNumber % 2 === 0) {
+      const lockIndex = Math.floor(Math.random() * 5);
+      this.lockedPlayerLanes[lockIndex] = true;
+      this.log(`📋 Inspector Grimshaw places CONDEMNED TAPE on Lane ${lockIndex + 1}!`);
+    }
+
+    this.log(`─── Round ${this.roundNumber} begins! Energy: ${baseEnergy} ───`);
+
+    // Board start of round triggers
+    this.processStartOfRoundTriggers();
+
+    // Move to Draw Phase
+    this.executeDrawPhase();
+  }
+
+  processStartOfRoundTriggers() {
+    for (let i = 0; i < 5; i++) {
+      const pUnit = this.playerLanes[i];
+      if (pUnit && pUnit.onRoundStart) {
+        pUnit.onRoundStart(pUnit, i, this, true);
+      }
+      const eUnit = this.enemyLanes[i];
+      if (eUnit && eUnit.onRoundStart) {
+        eUnit.onRoundStart(eUnit, i, this, false);
+      }
+    }
+  }
+
+  executeDrawPhase() {
+    this.phase = CombatPhase.DRAW;
+    const cardsToDraw = this.roundNumber === 1 ? 5 : 4;
+
+    const pDrawn = this.player.deckManager.drawCards(cardsToDraw, () => {
+      this.log("🔄 Player draw pile empty: Shuffled Discard Pile back into Draw Pile!");
+    });
+    const eDrawn = this.enemy.deckManager.drawCards(cardsToDraw, () => {
+      this.log("🔄 Enemy draw pile empty: Shuffled Discard Pile back into Draw Pile!");
+    });
+
+    this.log(`Player drew ${pDrawn.length} cards. Enemy drew ${eDrawn.length} cards.`);
+    this.notify("draw_completed", { playerDrawn: pDrawn, enemyDrawn: eDrawn });
+
+    this.phase = CombatPhase.PLANNING;
+    this.notify("phase_changed", { phase: this.phase });
+  }
+
+  // --- Planning Actions (Player & AI) ---
+
+  canPlayCard(isPlayer, cardInstance, targetLaneIndex = null) {
+    if (this.phase !== CombatPhase.PLANNING) return { allowed: false, reason: "Not in Planning Phase" };
+    const entity = isPlayer ? this.player : this.enemy;
+    const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
+
+    if (entity.energy < cardInstance.cost) {
+      return { allowed: false, reason: `Need ${cardInstance.cost} Energy (have ${entity.energy})` };
+    }
+
+    if (cardInstance.type === "item") {
+      if (targetLaneIndex === null || targetLaneIndex < 0 || targetLaneIndex > 4) {
+        return { allowed: false, reason: "Please choose a lane (1 to 5)" };
+      }
+      if (isPlayer && this.lockedPlayerLanes[targetLaneIndex]) {
+        return { allowed: false, reason: "Lane is locked by Inspector Grimshaw!" };
+      }
+      if (lanes[targetLaneIndex] !== null) {
+        return { allowed: false, reason: "Lane already occupied" };
+      }
+    }
+
+    return { allowed: true };
+  }
+
+  playCard(isPlayer, cardInstanceId, targetLaneIndex = null, targetItem = null) {
+    const entity = isPlayer ? this.player : this.enemy;
+    const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
+    const opposingLanes = isPlayer ? this.enemyLanes : this.playerLanes;
+    const card = entity.deckManager.hand.find(c => c.instanceId === cardInstanceId);
+
+    if (!card) return false;
+    const check = this.canPlayCard(isPlayer, card, targetLaneIndex);
+    if (!check.allowed) {
+      this.log(`⚠️ Cannot play ${card.name}: ${check.reason}`);
+      return false;
+    }
+
+    // Deduct cost
+    entity.energy -= card.cost;
+    entity.deckManager.playCardFromHand(card.instanceId);
+
+    // Relic triggers
+    if (isPlayer) {
+      this.relics.forEach(r => {
+        if (r.onCardPlayed) r.onCardPlayed(card, this.relicState);
+      });
+    }
+
+    if (card.type === "item") {
+      lanes[targetLaneIndex] = card;
+      this.log(`${entity.name} deployed ${card.name} into Lane ${targetLaneIndex + 1}!`);
+
+      // On Play triggers
+      const opposingUnit = opposingLanes[targetLaneIndex];
+      if (card.onPlay) {
+        card.onPlay(card, lanes, this, isPlayer, false, targetLaneIndex, opposingUnit);
+      }
+      if (card.onPlayCheckSynergy) {
+        card.onPlayCheckSynergy(card, lanes, this);
+      }
+    } else if (card.type === "trick") {
+      this.log(`${entity.name} played trick: ${card.name}!`);
+      if (card.cast) card.cast(entity, this, isPlayer);
+      if (card.castTargetItem && targetItem) card.castTargetItem(targetItem, targetLaneIndex, this, isPlayer);
+      entity.deckManager.sendToDiscard(card);
+    } else if (card.type === "upgrade") {
+      if (targetItem) {
+        if (card.apply) card.apply(targetItem, this);
+        entity.deckManager.sendToDiscard(card);
+      }
+    }
+
+    this.notify("board_updated");
+    return true;
+  }
+
+  useShopkeeperAbility(isPlayer, abilityId, targetLaneIndex = null) {
+    if (this.phase !== CombatPhase.PLANNING) return false;
+    const entity = isPlayer ? this.player : this.enemy;
+    const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
+    const ability = entity.abilities.find(a => a.id === abilityId);
+
+    if (!ability) return false;
+    if (entity.energy < ability.cost) {
+      this.log(`⚠️ Need ${ability.cost} Energy for ${ability.name}`);
+      return false;
+    }
+
+    let target = null;
+    if (ability.targetType === "friendly_item") {
+      if (targetLaneIndex === null || !lanes[targetLaneIndex]) {
+        this.log(`⚠️ Select a friendly item for ${ability.name}`);
+        return false;
+      }
+      target = lanes[targetLaneIndex];
+    } else if (ability.targetType === "any_friendly") {
+      if (targetLaneIndex !== null && lanes[targetLaneIndex]) {
+        target = lanes[targetLaneIndex];
+      } else {
+        target = entity; // Shopkeeper self
+      }
+    }
+
+    entity.energy -= ability.cost;
+    ability.execute(target, this, isPlayer);
+    this.notify("board_updated");
+    return true;
+  }
+
+  useSignatureAbility(isPlayer) {
+    if (this.phase !== CombatPhase.PLANNING) return false;
+    const entity = isPlayer ? this.player : this.enemy;
+    const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
+
+    if (entity.kassa < entity.kassaMax) {
+      this.log(`⚠️ Kassa meter not yet full (${entity.kassa}/${entity.kassaMax})!`);
+      return false;
+    }
+
+    entity.kassa = 0; // Consume meter
+    entity.signature.execute(lanes, this, isPlayer);
+    this.notify("board_updated");
+    return true;
+  }
+
+  // --- OPEN THE SHOP & RESOLUTION ---
+
+  openTheShop() {
+    if (this.phase !== CombatPhase.PLANNING) return;
+    this.phase = CombatPhase.OPEN_SHOP;
+    this.log(`🔔 TING! OPEN THE SHOP! All planned stock goes to work!`);
+    this.notify("shop_opened");
+
+    // Begin deterministic combat resolution
+    this.executeCombatResolution();
+  }
+
+  executeCombatResolution() {
+    this.phase = CombatPhase.RESOLUTION;
+
+    // Step 1: Pre-Combat triggers (e.g. Jealous Mirror, Looking-Glass)
+    for (let i = 0; i < 5; i++) {
+      const pUnit = this.playerLanes[i];
+      const eUnit = this.enemyLanes[i];
+      if (pUnit && pUnit.onPreCombat) {
+        const neighbors = [this.playerLanes[i - 1], this.playerLanes[i + 1]];
+        pUnit.onPreCombat(pUnit, neighbors, this, i, eUnit);
+      }
+      if (eUnit && eUnit.onPreCombat) {
+        const neighbors = [this.enemyLanes[i - 1], this.enemyLanes[i + 1]];
+        eUnit.onPreCombat(eUnit, neighbors, this, i, pUnit);
+      }
+    }
+
+    // Step 2: Lane-by-Lane Clash (Lane 0 to 4)
+    for (let laneIdx = 0; laneIdx < 5; laneIdx++) {
+      this.resolveSingleLane(laneIdx);
+      if (this.checkWinLoss()) return;
+    }
+
+    // Step 3: Round End damage from queues
+    if (this.roundEndDamageQueue.player > 0) {
+      this.damageShopkeeper("player", this.roundEndDamageQueue.player, "Pending round penalty");
+      this.roundEndDamageQueue.player = 0;
+    }
+    if (this.roundEndDamageQueue.enemy > 0) {
+      this.damageShopkeeper("enemy", this.roundEndDamageQueue.enemy, "Pending round penalty");
+      this.roundEndDamageQueue.enemy = 0;
+    }
+
+    // Step 4: End of Round triggers on units
+    for (let i = 0; i < 5; i++) {
+      const pUnit = this.playerLanes[i];
+      if (pUnit && pUnit.onRoundEnd) {
+        pUnit.onRoundEnd(pUnit, this.playerLanes, this, true);
+      }
+      const eUnit = this.enemyLanes[i];
+      if (eUnit && eUnit.onRoundEnd) {
+        eUnit.onRoundEnd(eUnit, this.enemyLanes, this, false);
+      }
+    }
+
+    // Relic Round End triggers
+    this.relics.forEach(r => {
+      if (r.onRoundEnd) r.onRoundEnd(this, true);
+    });
+
+    if (this.checkWinLoss()) return;
+
+    // Transition to next round
+    setTimeout(() => {
+      this.startNextRound();
+    }, 800);
+  }
+
+  resolveSingleLane(laneIdx) {
+    const pUnit = this.playerLanes[laneIdx];
+    const eUnit = this.enemyLanes[laneIdx];
+
+    if (!pUnit && !eUnit) return; // Empty lane
+
+    this.log(`⚔️ Resolving Lane ${laneIdx + 1}...`);
+
+    // Case 1: Both lanes have an item
+    if (pUnit && eUnit) {
+      const pAttack = Math.max(0, pUnit.attack + (pUnit.tempAttackBonus || 0));
+      const eAttack = Math.max(0, eUnit.attack + (eUnit.tempAttackBonus || 0));
+
+      if (pUnit.hasSwift && !eUnit.hasSwift) {
+        // Player strikes first
+        eUnit.health -= pAttack;
+        this.log(`Swift strike! ${pUnit.name} deals ${pAttack} damage to ${eUnit.name}.`);
+        if (eUnit.health > 0) {
+          pUnit.health -= eAttack;
+          this.log(`${eUnit.name} strikes back for ${eAttack} damage.`);
+        }
+      } else if (eUnit.hasSwift && !pUnit.hasSwift) {
+        // Enemy strikes first
+        pUnit.health -= eAttack;
+        this.log(`Swift strike! ${eUnit.name} deals ${eAttack} damage to ${pUnit.name}.`);
+        if (pUnit.health > 0) {
+          eUnit.health -= pAttack;
+          this.log(`${pUnit.name} strikes back for ${pAttack} damage.`);
+        }
+      } else {
+        // Simultaneous damage
+        pUnit.health -= eAttack;
+        eUnit.health -= pAttack;
+        this.log(`Clash! ${pUnit.name} (${pAttack} dmg) <==> ${eUnit.name} (${eAttack} dmg).`);
+      }
+
+      // Check deaths
+      this.checkUnitDeath(true, laneIdx);
+      this.checkUnitDeath(false, laneIdx);
+    } 
+    // Case 2: Player unit attacks uncontested lane
+    else if (pUnit && !eUnit) {
+      const pAttack = Math.max(0, pUnit.attack + (pUnit.tempAttackBonus || 0));
+      if (pAttack > 0) {
+        this.damageShopkeeper("enemy", pAttack, `Uncontested Lane ${laneIdx + 1}: ${pUnit.name}`);
+      }
+    } 
+    // Case 3: Enemy unit attacks uncontested lane
+    else if (!pUnit && eUnit) {
+      const eAttack = Math.max(0, eUnit.attack + (eUnit.tempAttackBonus || 0));
+      if (eAttack > 0) {
+        // Check if player has Taunt elsewhere
+        const tauntIdx = this.playerLanes.findIndex(c => c && c.keywords.includes("taunt"));
+        if (tauntIdx !== -1) {
+          const tauntUnit = this.playerLanes[tauntIdx];
+          tauntUnit.health -= eAttack;
+          this.log(`🛡️ ${tauntUnit.name} intercepts the attack on Lane ${laneIdx + 1} taking ${eAttack} damage!`);
+          this.checkUnitDeath(true, tauntIdx);
+        } else {
+          this.damageShopkeeper("player", eAttack, `Uncontested Lane ${laneIdx + 1}: ${eUnit.name}`);
+        }
+      }
+    }
+
+    this.notify("lane_resolved", { laneIndex: laneIdx });
+  }
+
+  checkUnitDeath(isPlayer, laneIdx) {
+    const lanes = isPlayer ? this.playerLanes : this.enemyLanes;
+    const unit = lanes[laneIdx];
+    if (unit && unit.health <= 0) {
+      this.log(`💥 ${unit.name} broke and was removed from Lane ${laneIdx + 1}!`);
+      lanes[laneIdx] = null;
+
+      // Track death for round
+      const deathList = isPlayer ? this.destroyedThisRound.player : this.destroyedThisRound.enemy;
+      deathList.push(unit);
+
+      // Trigger On-Death
+      if (unit.onDeath) {
+        unit.onDeath(unit, this, isPlayer, laneIdx);
+      }
+
+      // Trigger global death listeners (e.g. Scrap Rat)
+      this.triggerGlobalItemDeath(unit);
+
+      // Route to Discard
+      const dm = isPlayer ? this.player.deckManager : this.enemy.deckManager;
+      dm.sendToDiscard(unit);
+    }
+  }
+
+  triggerGlobalItemDeath(deadUnit) {
+    for (let i = 0; i < 5; i++) {
+      const p = this.playerLanes[i];
+      if (p && p.onAnyItemDeath) p.onAnyItemDeath(p, this);
+      const e = this.enemyLanes[i];
+      if (e && e.onAnyItemDeath) e.onAnyItemDeath(e, this);
+    }
+  }
+
+  // --- Helper Methods ---
+
+  dealLaneDamage(targetSide, laneIndex, amount, reason = "") {
+    const lanes = targetSide === "player" ? this.playerLanes : this.enemyLanes;
+    const unit = lanes[laneIndex];
+    if (unit) {
+      unit.health -= amount;
+      this.log(`${reason} — deals ${amount} damage to ${unit.name} on Lane ${laneIndex + 1}!`);
+      this.checkUnitDeath(targetSide === "player", laneIndex);
+    } else {
+      this.damageShopkeeper(targetSide, amount, `${reason} (Direct Lane Hit)`);
+    }
+    this.notify("board_updated");
+  }
+
+  dealAllLaneDamage(targetSide, amount, reason = "") {
+    for (let i = 0; i < 5; i++) {
+      this.dealLaneDamage(targetSide, i, amount, reason);
+    }
+  }
+
+  damageShopkeeper(targetSide, amount, reason = "") {
+    const entity = targetSide === "player" ? this.player : this.enemy;
+    entity.health = Math.max(0, entity.health - amount);
+    this.log(`💥 ${entity.name} takes ${amount} damage! (${entity.health}/${entity.maxHealth} HP) [${reason}]`);
+    this.notify("shopkeeper_damaged", { targetSide, amount, health: entity.health });
+    this.checkWinLoss();
+  }
+
+  healShopkeeper(targetSide, amount, reason = "") {
+    const entity = targetSide === "player" ? this.player : this.enemy;
+    entity.health = Math.min(entity.maxHealth, entity.health + amount);
+    this.log(`💚 ${entity.name} heals for ${amount} HP! (${reason})`);
+    this.notify("board_updated");
+  }
+
+  addWarmth(targetSide, amount) {
+    const entity = targetSide === "player" ? this.player : this.enemy;
+    entity.warmth += amount;
+    this.log(`☀️ ${entity.name} gained ${amount} Warmth (Total: ${entity.warmth})!`);
+
+    // Check tapestry or warmth triggers
+    const lanes = targetSide === "player" ? this.playerLanes : this.enemyLanes;
+    lanes.forEach(unit => {
+      if (unit && unit.onWarmthCheck) unit.onWarmthCheck(unit, entity.warmth, this, targetSide === "player");
+    });
+  }
+
+  addKassa(targetSide, amount) {
+    const entity = targetSide === "player" ? this.player : this.enemy;
+    entity.kassa = Math.min(entity.kassaMax, entity.kassa + amount);
+    this.log(`🪙 Kassa meter for ${entity.name}: ${entity.kassa}/${entity.kassaMax}`);
+    this.notify("board_updated");
+  }
+
+  addEnergy(targetSide, amount) {
+    const entity = targetSide === "player" ? this.player : this.enemy;
+    entity.energy += amount;
+  }
+
+  drawCards(targetSide, count) {
+    const dm = targetSide === "player" ? this.player.deckManager : this.enemy.deckManager;
+    return dm.drawCards(count, () => {
+      this.log(`🔄 ${targetSide} deck cycled and reshuffled!`);
+    });
+  }
+
+  discardRandomCard(targetSide) {
+    const dm = targetSide === "player" ? this.player.deckManager : this.enemy.deckManager;
+    const card = dm.discardRandomCard();
+    if (card && targetSide === "player") {
+      this.relics.forEach(r => {
+        if (r.onCardDiscarded) r.onCardDiscarded(this, true);
+      });
+    }
+    return card;
+  }
+
+  getHand(targetSide) {
+    const dm = targetSide === "player" ? this.player.deckManager : this.enemy.deckManager;
+    return dm.hand;
+  }
+
+  registerRoundEndDamage(targetSide, amount) {
+    this.roundEndDamageQueue[targetSide] += amount;
+  }
+
+  reclaimTrickToHand(targetSide, costOverride = null) {
+    const dm = targetSide === "player" ? this.player.deckManager : this.enemy.deckManager;
+    const trick = dm.reclaimCardFromDiscard(c => c.type === "trick");
+    if (trick && costOverride !== null) {
+      trick.cost = costOverride;
+      this.log(`Reclaimed ${trick.name} into hand with cost ${costOverride}!`);
+    }
+    return trick;
+  }
+
+  reclaimItemToHand(targetSide, costDiscount = 0) {
+    const dm = targetSide === "player" ? this.player.deckManager : this.enemy.deckManager;
+    const item = dm.reclaimCardFromDiscard(c => c.type === "item");
+    if (item) {
+      item.cost = Math.max(0, item.cost - costDiscount);
+      item.playCount = (item.playCount || 0) + 1;
+      this.log(`Reclaimed ${item.name} into hand with discount!`);
+    }
+    return item;
+  }
+
+  resurrectRoundDeaths(targetSide) {
+    const list = targetSide === "player" ? this.destroyedThisRound.player : this.destroyedThisRound.enemy;
+    const lanes = targetSide === "player" ? this.playerLanes : this.enemyLanes;
+
+    list.forEach(card => {
+      const emptyIdx = lanes.findIndex(c => c === null);
+      if (emptyIdx !== -1) {
+        card.health = 1;
+        card.maxHealth = 1;
+        card.hasSwift = true;
+        lanes[emptyIdx] = card;
+        this.log(`👻 ${card.name} revived onto Lane ${emptyIdx + 1} with Swift!`);
+      }
+    });
+  }
+
+  checkWinLoss() {
+    if (this.winner) return true;
+
+    if (this.player.health <= 0 && this.enemy.health <= 0) {
+      this.winner = "draw";
+      this.phase = CombatPhase.BATTLE_OVER;
+      this.log(`⚖️ DOUBLE DEFEAT! Both shop counters collapsed in the brawl!`);
+      this.notify("battle_ended", { winner: "draw" });
+      return true;
+    } else if (this.enemy.health <= 0) {
+      this.winner = "player";
+      this.phase = CombatPhase.BATTLE_OVER;
+      this.log(`🏆 VICTORY! You defended the shop!`);
+      this.notify("battle_ended", { winner: "player" });
+      return true;
+    } else if (this.player.health <= 0) {
+      this.winner = "enemy";
+      this.phase = CombatPhase.BATTLE_OVER;
+      this.log(`💀 DEFEAT! Your shop counter was overrun!`);
+      this.notify("battle_ended", { winner: "enemy" });
+      return true;
+    }
+    return false;
+  }
+}
