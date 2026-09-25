@@ -1,0 +1,22 @@
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node / Build artifacts
+node_modules/
+dist/
+build/
+.cache/
+
+# Godot / Editor
+.godot/
+*.translation
+*.import
+
+# Environment & Temp
+.env
+.env.local
+*.log
+scratch/
+tmp/
