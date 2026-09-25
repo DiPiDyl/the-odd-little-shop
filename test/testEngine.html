@@ -116,7 +116,38 @@
         assert(saveState.decks.cozy_counter.length === 20, "Cozy Counter deck has exactly 20 cards");
         assert(saveState.decks.midnight_bazaar.length === 20, "Midnight Bazaar deck has exactly 20 cards");
 
-        logs.push("🎉 ALL 8 OVERHAUL ENGINE TESTS PASSED SUCCESSFULLY!");
+        // Test 9: CCG Keyword Execution (Divine Shield & Lifesteal)
+        const shieldMinion = createCardInstance({
+          id: "test_shield", name: "Wardstone", cost: 2, attack: 2, health: 4,
+          keywords: ["divine_shield"]
+        });
+        const lifestealAttacker = createCardInstance({
+          id: "test_vampire", name: "Leech Dagger", cost: 2, attack: 3, health: 3,
+          keywords: ["lifesteal"]
+        });
+        engine.player.health = 20;
+        const dealtToShield = engine.applyUnitDamage(shieldMinion, 5, lifestealAttacker, true, 0);
+        assert(dealtToShield === 0, "Divine Shield successfully absorbed the 5 damage!");
+        assert(shieldMinion.health === 4, "Wardstone took 0 damage while shielded");
+        assert(shieldMinion.hasDivineShield === false, "Divine Shield popped after absorbing hit");
+
+        const unshieldedDealt = engine.applyUnitDamage(shieldMinion, 2, lifestealAttacker, false, 0);
+        assert(unshieldedDealt === 2, "Unshielded minion took 2 damage");
+        assert(shieldMinion.health === 2, "Wardstone health reduced to 2");
+        assert(engine.player.health === 22, "Lifesteal healed player Hero for +2 HP!");
+
+        // Test 10: Card Lab Custom Card Model & Save Persistence
+        assert(saveState.cardLabIdeas.length >= 2, "Save state includes preloaded custom Card Lab ideas");
+        const customCard = saveState.cardLabIdeas[0];
+        assert(customCard.name && customCard.type && customCard.cost !== undefined, "Custom Lab card has valid parameters");
+        const labInstance = createCardInstance(customCard);
+        assert(labInstance.isMinion() === true, "Card Lab minion correctly instantiated");
+
+        // Test 11: Crafting & Disenchanting Economy Verification
+        assert(saveState.currency.scrap >= 0, "Scrap currency exists and is non-negative");
+        assert(saveState.achievements.length >= 4, "Achievements system initialized with goals");
+
+        logs.push("🎉 ALL 11 OVERHAUL ENGINE & CCG TESTS PASSED SUCCESSFULLY!");
         resultsDiv.innerHTML = logs.map(l => `<p>${l}</p>`).join("");
         document.title = "TESTS_PASSED";
       } catch (err) {

@@ -10,6 +10,10 @@ export class PawnShopModal {
     this.haggleCompleted = false;
   }
 
+  open() {
+    this.show();
+  }
+
   show() {
     const unownedCards = [];
     const copies = this.app.saveData.inventory.cardCopies || {};

@@ -233,6 +233,12 @@ export class PackOpeningScreen {
     this.currentOpenedCards = null;
     this.flippedIndices.clear();
 
+    // Track stats & achievements
+    if (!this.app.saveData.stats) this.app.saveData.stats = {};
+    this.app.saveData.stats.packsOpened = (this.app.saveData.stats.packsOpened || 0) + 1;
+    const ach = (this.app.saveData.achievements || []).find(a => a.id === "ach_pack_rat");
+    if (ach) ach.progress = Math.min(ach.goal, (ach.progress || 0) + 1);
+
     this.app.saveState();
     soundFx.playCounterBell();
     this.app.render();

@@ -246,7 +246,7 @@ export class CombatEngine {
       return { allowed: false, reason: `Need ${cardInstance.cost} Energy (have ${entity.energy})` };
     }
 
-    if (cardInstance.type === "item") {
+    if (cardInstance.type === "item" || cardInstance.type === "minion") {
       if (targetLaneIndex === null || targetLaneIndex < 0 || targetLaneIndex > 4) {
         return { allowed: false, reason: "Please choose a lane (1 to 5)" };
       }
@@ -285,7 +285,7 @@ export class CombatEngine {
       });
     }
 
-    if (card.type === "item") {
+    if (card.type === "item" || card.type === "minion") {
       lanes[targetLaneIndex] = card;
       this.log(`${entity.name} deployed ${card.name} into Lane ${targetLaneIndex + 1}!`);
 
@@ -297,12 +297,12 @@ export class CombatEngine {
       if (card.onPlayCheckSynergy) {
         card.onPlayCheckSynergy(card, lanes, this);
       }
-    } else if (card.type === "trick") {
+    } else if (card.type === "trick" || card.type === "spell") {
       this.log(`${entity.name} played trick: ${card.name}!`);
       if (card.cast) card.cast(entity, this, isPlayer);
       if (card.castTargetItem && targetItem) card.castTargetItem(targetItem, targetLaneIndex, this, isPlayer);
       entity.deckManager.sendToDiscard(card);
-    } else if (card.type === "upgrade") {
+    } else if (card.type === "upgrade" || card.type === "weapon") {
       if (targetItem) {
         if (card.apply) card.apply(targetItem, this);
         entity.deckManager.sendToDiscard(card);
@@ -464,28 +464,28 @@ export class CombatEngine {
       const eAttack = Math.max(0, eUnit.attack + (eUnit.tempAttackBonus || 0));
 
       if (pUnit.hasSwift && !eUnit.hasSwift) {
-        eUnit.health -= pAttack;
-        this.notify("damage_dealt", { target: "enemy_unit", laneIndex: laneIdx, amount: pAttack });
-        this.log(`Swift strike! ${pUnit.name} hits ${eUnit.name} for ${pAttack} damage.`);
+        const dealt = this.applyUnitDamage(eUnit, pAttack, pUnit, false, laneIdx);
+        this.notify("damage_dealt", { target: "enemy_unit", laneIndex: laneIdx, amount: dealt });
+        this.log(`Swift strike! ${pUnit.name} hits ${eUnit.name} for ${dealt} damage.`);
         if (eUnit.health > 0) {
-          pUnit.health -= eAttack;
-          this.notify("damage_dealt", { target: "player_unit", laneIndex: laneIdx, amount: eAttack });
-          this.log(`${eUnit.name} strikes back for ${eAttack} damage.`);
+          const retaliation = this.applyUnitDamage(pUnit, eAttack, eUnit, true, laneIdx);
+          this.notify("damage_dealt", { target: "player_unit", laneIndex: laneIdx, amount: retaliation });
+          this.log(`${eUnit.name} strikes back for ${retaliation} damage.`);
         }
       } else if (eUnit.hasSwift && !pUnit.hasSwift) {
-        pUnit.health -= eAttack;
-        this.notify("damage_dealt", { target: "player_unit", laneIndex: laneIdx, amount: eAttack });
-        this.log(`Swift strike! ${eUnit.name} hits ${pUnit.name} for ${eAttack} damage.`);
+        const dealt = this.applyUnitDamage(pUnit, eAttack, eUnit, true, laneIdx);
+        this.notify("damage_dealt", { target: "player_unit", laneIndex: laneIdx, amount: dealt });
+        this.log(`Swift strike! ${eUnit.name} hits ${pUnit.name} for ${dealt} damage.`);
         if (pUnit.health > 0) {
-          eUnit.health -= pAttack;
-          this.notify("damage_dealt", { target: "enemy_unit", laneIndex: laneIdx, amount: pAttack });
-          this.log(`${pUnit.name} strikes back for ${pAttack} damage.`);
+          const retaliation = this.applyUnitDamage(eUnit, pAttack, pUnit, false, laneIdx);
+          this.notify("damage_dealt", { target: "enemy_unit", laneIndex: laneIdx, amount: retaliation });
+          this.log(`${pUnit.name} strikes back for ${retaliation} damage.`);
         }
       } else {
-        pUnit.health -= eAttack;
-        eUnit.health -= pAttack;
-        this.notify("damage_dealt", { target: "both_units", laneIndex: laneIdx, pAmount: eAttack, eAmount: pAttack });
-        this.log(`Clash! ${pUnit.name} (${pAttack} dmg) <==> ${eUnit.name} (${eAttack} dmg).`);
+        const pDealt = this.applyUnitDamage(eUnit, pAttack, pUnit, false, laneIdx);
+        const eDealt = this.applyUnitDamage(pUnit, eAttack, eUnit, true, laneIdx);
+        this.notify("damage_dealt", { target: "both_units", laneIndex: laneIdx, pAmount: eDealt, eAmount: pDealt });
+        this.log(`Clash! ${pUnit.name} (${pDealt} dmg) <==> ${eUnit.name} (${eDealt} dmg).`);
       }
 
       this.checkUnitDeath(true, laneIdx);
@@ -553,6 +553,26 @@ export class CombatEngine {
 
   // --- Helper Methods ---
 
+  applyUnitDamage(targetUnit, amount, attackerUnit = null, isTargetPlayer = false, laneIdx = null) {
+    if (!targetUnit || amount <= 0) return 0;
+    let finalAmount = amount;
+    if (targetUnit.hasDivineShield || (targetUnit.keywords && targetUnit.keywords.includes("divine_shield"))) {
+      targetUnit.hasDivineShield = false;
+      targetUnit.keywords = targetUnit.keywords.filter(k => k !== "divine_shield");
+      this.log(`✨ Divine Shield absorbs the blow on ${targetUnit.name}!`);
+      this.notify("damage_absorbed", { isPlayer: isTargetPlayer, laneIndex: laneIdx });
+      finalAmount = 0;
+    } else {
+      targetUnit.health -= finalAmount;
+    }
+
+    if (attackerUnit && attackerUnit.keywords && attackerUnit.keywords.includes("lifesteal") && finalAmount > 0) {
+      this.healShopkeeper(isTargetPlayer ? "enemy" : "player", finalAmount, `${attackerUnit.name} Lifesteal`);
+    }
+
+    return finalAmount;
+  }
+
   dealLaneDamage(targetSide, laneIndex, amount, reason = "") {
     const lanes = targetSide === "player" ? this.playerLanes : this.enemyLanes;
     const unit = lanes[laneIndex];
@@ -598,11 +618,17 @@ export class CombatEngine {
     });
   }
 
-  addKassa(targetSide, amount) {
+  addRegister(targetSide, amount) {
     const entity = targetSide === "player" ? this.player : this.enemy;
-    entity.kassa = Math.min(entity.kassaMax, entity.kassa + amount);
-    this.log(`🪙 Kassa meter for ${entity.name}: ${entity.kassa}/${entity.kassaMax}`);
+    const maxVal = entity.registerMax || entity.kassaMax || 5;
+    entity.register = Math.min(maxVal, (entity.register || entity.kassa || 0) + amount);
+    entity.kassa = entity.register;
+    this.log(`🪙 Register meter for ${entity.name}: ${entity.register}/${maxVal}`);
     this.notify("board_updated");
+  }
+
+  addKassa(targetSide, amount) {
+    this.addRegister(targetSide, amount);
   }
 
   addEnergy(targetSide, amount) {

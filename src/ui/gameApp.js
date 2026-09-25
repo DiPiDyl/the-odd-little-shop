@@ -14,11 +14,17 @@ import { MainMenuScreen } from "./mainMenuScreen.js";
 import { DeckbuilderScreen } from "./deckbuilderScreen.js";
 import { PackOpeningScreen } from "./packOpeningScreen.js";
 import { PawnShopModal } from "./pawnShopModal.js";
+import { CardLabScreen } from "./cardLabScreen.js";
+import { CollectionScreen } from "./collectionScreen.js";
+import { ProfileScreen } from "./profileScreen.js";
+import { SettingsModal } from "./settingsModal.js";
+import { TutorialModal } from "./tutorialModal.js";
 
 export class GameApp {
   constructor() {
+    window.app = this;
     this.saveData = SaveManager.loadSave();
-    this.currentScreen = "main_menu"; // 'main_menu', 'battle', 'deckbuilder', 'packs'
+    this.currentScreen = "main_menu"; // 'main_menu', 'battle', 'deckbuilder', 'packs', 'collection', 'card_lab', 'profile'
 
     this.allCards = [...COZY_COUNTER_CARDS, ...MIDNIGHT_BAZAAR_CARDS];
     this.currentFaction = "cozy_counter";
@@ -30,11 +36,16 @@ export class GameApp {
     this.selectedAbility = null;
     this.selectedBoardLane = null; // For inspecting / selling
 
-    // Sub-screens
+    // Sub-screens & Modals
     this.mainMenu = new MainMenuScreen(this);
     this.deckbuilder = new DeckbuilderScreen(this);
     this.packScreen = new PackOpeningScreen(this);
     this.pawnModal = new PawnShopModal(this);
+    this.cardLab = new CardLabScreen(this);
+    this.collection = new CollectionScreen(this);
+    this.profile = new ProfileScreen(this);
+    this.settingsModal = new SettingsModal(this);
+    this.tutorialModal = new TutorialModal(this);
 
     this.setupGlobalEvents();
     this.render();
@@ -158,8 +169,31 @@ export class GameApp {
       this.render();
       if (data.winner === "player") {
         soundFx.playLegendaryStinger();
-        this.saveData.currency.coins += 50;
+        this.saveData.currency.coins = (this.saveData.currency.coins || 0) + 60;
         this.saveData.meta.completedRuns = (this.saveData.meta.completedRuns || 0) + 1;
+        
+        // Award XP & Level up check
+        this.saveData.player.xp = (this.saveData.player.xp || 0) + 150;
+        if (this.saveData.player.xp >= this.saveData.player.xpToNext) {
+          this.saveData.player.level += 1;
+          this.saveData.player.xp -= this.saveData.player.xpToNext;
+          this.saveData.player.xpToNext = Math.round(this.saveData.player.xpToNext * 1.25);
+        }
+
+        // Stats & Quests
+        if (!this.saveData.stats) this.saveData.stats = {};
+        this.saveData.stats.wins = (this.saveData.stats.wins || 0) + 1;
+        this.saveData.stats.gamesPlayed = (this.saveData.stats.gamesPlayed || 0) + 1;
+        (this.saveData.missions || []).forEach(m => {
+          if (m.id === "m_win_battles") m.progress = Math.min(m.goal, (m.progress || 0) + 1);
+        });
+
+        this.saveState();
+      } else if (data.winner === "enemy") {
+        soundFx.playUnitDeath();
+        if (!this.saveData.stats) this.saveData.stats = {};
+        this.saveData.stats.losses = (this.saveData.stats.losses || 0) + 1;
+        this.saveData.stats.gamesPlayed = (this.saveData.stats.gamesPlayed || 0) + 1;
         this.saveState();
       }
       setTimeout(() => {
@@ -178,10 +212,24 @@ export class GameApp {
       appEl.innerHTML = this.mainMenu.render();
     } else if (this.currentScreen === "deckbuilder") {
       appEl.innerHTML = this.deckbuilder.render();
+    } else if (this.currentScreen === "collection") {
+      appEl.innerHTML = this.collection.render();
+    } else if (this.currentScreen === "card_lab") {
+      appEl.innerHTML = this.cardLab.render();
+    } else if (this.currentScreen === "profile") {
+      appEl.innerHTML = this.profile.render();
     } else if (this.currentScreen === "packs") {
       appEl.innerHTML = this.packScreen.render();
     } else if (this.currentScreen === "battle") {
       this.renderBattleArena(appEl);
+    }
+
+    // Modal Overlays
+    let modalsHtml = "";
+    if (this.settingsModal && this.settingsModal.isOpen) modalsHtml += this.settingsModal.render();
+    if (this.tutorialModal && this.tutorialModal.isOpen) modalsHtml += this.tutorialModal.render();
+    if (modalsHtml) {
+      appEl.insertAdjacentHTML("beforeend", modalsHtml);
     }
   }
 
@@ -214,10 +262,10 @@ export class GameApp {
               <span class="meter-label">Energy: ${this.engine.player.energy} / ${this.engine.player.maxEnergy}</span>
             </div>
 
-            <!-- Kassa Meter -->
+            <!-- Register Meter -->
             <div class="meter-bar">
-              <div class="meter-fill-kassa" style="width: ${(this.engine.player.kassa / this.engine.player.kassaMax) * 100}%"></div>
-              <span class="meter-label">Kassa: ${this.engine.player.kassa} / ${this.engine.player.kassaMax}</span>
+              <div class="meter-fill-kassa" style="width: ${((this.engine.player.register || this.engine.player.kassa || 0) / (this.engine.player.registerMax || this.engine.player.kassaMax || 5)) * 100}%"></div>
+              <span class="meter-label">Register: ${this.engine.player.register || this.engine.player.kassa || 0} / ${this.engine.player.registerMax || this.engine.player.kassaMax || 5}</span>
             </div>
 
             <div style="margin-top: 6px; font-weight: 900; font-size: 0.9rem; color: #E65100;">
@@ -255,9 +303,9 @@ export class GameApp {
             `).join('')}
 
             <button class="ability-btn signature-btn"
-              ${this.engine.player.kassa < this.engine.player.kassaMax || !isPlanning ? 'disabled' : ''}
+              ${(this.engine.player.register || this.engine.player.kassa || 0) < (this.engine.player.registerMax || this.engine.player.kassaMax || 5) || !isPlanning ? 'disabled' : ''}
               onclick="window.app.onSignatureClicked()">
-              <strong>${this.engine.player.signature.emoji} ${this.engine.player.signature.name}</strong> (Full Kassa)<br/>
+              <strong>${this.engine.player.signature.emoji} ${this.engine.player.signature.name}</strong> (Full Register)<br/>
               <span style="font-size: 0.68rem; color: #555;">${this.engine.player.signature.description}</span>
             </button>
           </div>
@@ -574,7 +622,11 @@ export class GameApp {
   }
 
   showSettingsModal() {
-    alert("Audio Settings:\n• Web Audio Sound Effects: Enabled (100%)\n• Master Volume: 100%\n• Fast Combat: " + (animManager.isFastCombat ? 'ON' : 'OFF') + "\n• Save Version: 2.0 (Local)");
+    this.settingsModal.open();
+  }
+
+  showTutorialModal() {
+    this.tutorialModal.open();
   }
 
   showBattleEndModal(winner) {

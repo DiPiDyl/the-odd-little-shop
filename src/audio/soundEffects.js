@@ -371,6 +371,64 @@ class CozyAudioSynthesizer {
     osc.start();
     osc.stop(this.ctx.currentTime + 0.15);
   }
+
+  // --- Convenience UI & Game Aliases ---
+  playButtonClick() {
+    this.playCardSwoosh();
+  }
+
+  playCardHover() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(440, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(550, this.ctx.currentTime + 0.04);
+    gain.gain.setValueAtTime(0.04, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.04);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.04);
+  }
+
+  playErrorBuzz() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(120, this.ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(90, this.ctx.currentTime + 0.18);
+    gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.18);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.18);
+  }
+
+  playSellCoin() {
+    this.playSellRegister();
+  }
+
+  playCoinShower() {
+    for (let i = 0; i < 4; i++) {
+      setTimeout(() => this.playCoinClink(), i * 70);
+    }
+  }
+
+  playLegendaryFanfare() {
+    this.playLegendaryStinger();
+  }
+
+  playUnitDeath() {
+    this.playImpactHeavy();
+  }
 }
 
 export const soundFx = new CozyAudioSynthesizer();
+
