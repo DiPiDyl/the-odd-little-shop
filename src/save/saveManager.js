@@ -2,7 +2,7 @@
 import { COZY_COUNTER_CARDS } from "../data/cardsCozyCounter.js";
 import { MIDNIGHT_BAZAAR_CARDS } from "../data/cardsMidnightBazaar.js";
 
-const SAVE_STORAGE_KEY = "the_odd_little_shop_save_v2";
+const SAVE_STORAGE_KEY = "the_odd_little_shop_save_v2_5";
 
 export class SaveManager {
   static getInitialSaveState() {
@@ -218,13 +218,13 @@ export class SaveManager {
 
   static loadSave() {
     try {
-      const raw = localStorage.getItem(SAVE_STORAGE_KEY);
+      let raw = localStorage.getItem(SAVE_STORAGE_KEY);
+      if (!raw) {
+        raw = localStorage.getItem("the_odd_little_shop_save_v2");
+      }
       if (!raw) return this.getInitialSaveState();
       const parsed = JSON.parse(raw);
-      if (parsed.version === 2) {
-        return this.ensureDefaults(parsed);
-      }
-      return this.migrateSave(parsed);
+      return this.ensureDefaults(parsed);
     } catch (e) {
       console.warn("Failed to load local save, resetting to defaults", e);
       return this.getInitialSaveState();
